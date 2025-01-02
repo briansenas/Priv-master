@@ -1,0 +1,1255 @@
+---
+title: "EDARegresión"
+author: "Brian Sena Simons"
+date: "2024-11-24"
+output: html_document
+bibliography: citas.bib  
+editor_options: 
+  markdown: 
+    wrap: sentence
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r libraries, echo = FALSE, warning = FALSE}
+library(dplyr)
+library(tidyverse)
+library(ggplot2)
+library(caret)
+library(ggthemes)
+library(corrplot)
+library(kknn)
+library(moments)
+library(outliers)  # Grubbs
+```
+
+# Introducción al problema.
+
+## Descripción de los datos.
+
+Vamos a tratar de analizar y desarrollar una solución de regresión para el conjunto de datos "Concrete" [@concrete].
+Según la descripción de la página "UCI Machine Learning Repository" [@UCIMLR] del conjunto de datos estaríamos tratando de analizar ciertas propiedades del concreto.
+Este material es fundamental en la construcción debido a su resistencia y durabilidad, siendo la resistencia a la compresión una de las más importantes.
+Es interesante destacar que allí vemos un consejo que indica que la compresión es una función altamente no lineal que depende de varios factores.
+Este hecho nos puede ayudar a direcionar nuestro análisis.
+
+El conjunto de datos contiene 1030 instancias, cada una representa una mezcla de concreto con distintas proporciones de ingredientes.
+Está compuesto por 9 variables en total, de las cuales 8 son variables de entrada cuantitativas que describen los componentes del concreto y su edad, y 1 es una variable de salida, la resistencia a la compresión.
+Los ingredientes que se consideran en este conjunto incluyen el cemento, el alto horno, las cenizas, el agua, el superplastificante, el agregado grueso y el agregado fino, todos en kilogramos por metro cúbico.
+
+## Descripción de la tarea
+
+La tarea asociada a este conjunto de datos es un problema de regresión, donde el objetivo es predecir la resistencia a la compresión del concreto, expresada en megapascales (MPa), a partir de las variables de entrada.
+
+## Visualización de los datos.
+
+Para asegurarnos que disponemos de un conjunto de datos acorde con la descripción obtenida en la página oficial, realizaremos la lectura y un análisis exploratorio sobre el mismo.
+Para ello, nos aseguramos que estamos en el directorio correcto con el uso de `getwd` para poder así utilizar una función auxiliar para la lectura de archivos `.dat` denominada `read_dat_file` que hace uso de expresiones regulares junto a `readLines` para obtener el "data.frame".
+
+```{r set-directory}
+# Nos aseguramos que la dirección es correcta.
+getwd()
+# En caso de no estar bien ubicados, setear el directorio.
+# setwd("")
+```
+
+```{r auxiliar-read-functions}
+# startregion input
+read_dat_file <- function(x) { 
+  #' Automatically read dat files.
+  #' 
+  #' @description  This functions attempts to automatically read a .dat file and retrieve
+  #' the columns names using regex against the keywords that are commonly defined 
+  #' inside the files such as: attribute
+  #' 
+  #' @param x file from which we will read the lines.
+  #' @usage read_dat_file(x)
+  #' @return The result of read.table given the data and col.names (data.frame).
+  
+  # Read all lines from the .dat file
+  lines <- readLines(x)
+  # Extract column names from the lines starting with '@attribute'
+  attr_lines <- grep("@attribute", lines)
+  column_names <- gsub("@attribute\\s+(\\w+).*", "\\1", lines[attr_lines])
+  # Find where the data starts
+  data_start <- grep("@data", lines) + 1
+  # Read the data using extracted column names
+  read.table(
+    text = lines[data_start:length(lines)],
+    header = FALSE,
+    sep = ",",
+    col.names = column_names
+  )
+}
+
+set_predictors_name <- function(x) {
+  #' Rename the columns as X[0-9]+
+  #'
+  #' @description By renaming the columnas as X[0-9]+ we will have easier access
+  #' to creating the linear models using the R formulas.
+  #' 
+  #' @param x Data.frame we wish to rename
+  #' @usage df <- set_predictors_name(x)
+  #' @return A new data.frame with the new columns names.
+  n <- length(names(x)) - 1 
+  names(x)[1:n] <- paste ("X", 1:n, sep="") 
+  names(x)[n+1] <- "Y"  
+  x
+}
+
+Concrete <- read_dat_file('concrete/concrete.dat')
+Concrete %>% str
+```
+
+Vemos que efectivamente coincide la descripción con el fichero que disponemos (en relación al número de instancias y columnas, teniendo también en cuenta el nombre de las mismas).
+No tenemos ninguna variable categórica a la cual aplicar alguna transformación, ni fechas que disponer (edad es un valor numérico).
+Podemos también verificar si realmente no posee ningún valor faltante.
+
+```{r check-missing-values}
+Concrete %>% filter(if_any(everything(), is.na))
+```
+
+El resultado es que no tenemos ningún valor faltante en ninguna de las columnas.
+No tenemos que plantear eliminar ni imputar ninguna columna.
+Podemos proceder a buscar valores anómalos y estudiar las distribuciones de nuestros datos de forma general.
+Podemos observar un resumen de las columnas
+
+```{r concrete-summary}
+Concrete %>% summary
+```
+
+Vemos que la edad esta expresada en días, y va desde 1 a 365 días.
+Llama la atención las columnas "BlastFurnaceSlag", "FlyAsh" y "Superplasticizer" que poseen valores iguales a 0.
+Para observar mejor las variables, podemos pintar sus distribuciones.
+Para ello, normalizaremos los valores de las variables y dibujamos todos los histogramas.
+
+```{r concrete-plot-distributions}
+# png(file="docs/imgs/reg/Histogramas.png", width=7,height=7, units='in', res=300)
+scaledConcrete <- Concrete %>% 
+  mutate(across(!ConcreteCompressiveStrength, scale))
+
+pivotedConcrete <- scaledConcrete %>% 
+  pivot_longer(cols = -ConcreteCompressiveStrength)
+
+ggplot(data = pivotedConcrete) + 
+  geom_histogram(
+    aes(x = value),
+    bins=30,
+    fill="lightgray",
+    color="black",
+    closed="left",
+    boundary = 0,
+  ) +
+  facet_wrap(~name) + 
+  theme_minimal() + 
+  labs(
+    title = "Distribuciones de valores", 
+    y = "Frecuencia", 
+    x = "Valor normalizado"
+  )
+# dev.off()
+```
+
+Vemos cierta asimétrica en varias columnas, como "Age", "BlastFurnaceSlag", "FlyAsh", "Superplasticizer" en las cuales tenemos muchos valores en el lado izquierdo de la distribución.
+Podemos Visualizar cada una de las variables individualmente una a una.
+Además, podemos utilizar la regla de Freedman-Diacones para calcular el "binwidth" adecuado para asegurar que estábamos analizando bien dichas distribuciones, ya que el número de "bins" puede afectar a cómo se visualiza las distribuciones.
+
+```{r individual-histograms}
+get_freedman_diaconis_bw <- function (x){
+  #' Freedman-Diaconis BinWidth rule.
+  #' 
+  #' @description This is a robust way of measuring the adequate binwidth for a histogram plot. 
+  #' We must do the following formula 2 * IQR(x) / length(x)^(1/3)
+  #' @param x The vector with the values we will plot.
+  #' @return The binwidth (numerical)
+  2 * IQR(x) / length(x)^(1/3)
+}
+
+get_all_freedman_bw <- function(data, rename = TRUE) { 
+  #' Calculate BinWidth for all columns using Freedman-Diaconis
+  #'
+  #' @description We use mutate_all to transform every column into their corresponding binwidth 
+  #' @param data The dataframe we will be working with
+  #' @param rename Whether to rename or not the columns. Defaults to TRUE
+  #' @return A dataframe with the bin-widths.
+  binwidths <- data %>% 
+    mutate_all(get_freedman_diaconis_bw) %>% 
+    head(1)
+  
+  n <- length(names(binwidths))
+  if(rename) {
+    names(binwidths)[1:n] <- paste ("BW", 1:n, sep="") 
+    binwidths <- binwidths %>% 
+      pivot_longer(
+        names(binwidths),
+        names_to = "bins",
+        values_to = "width"
+      )
+  }
+  binwidths
+}
+
+binwidths <- get_all_freedman_bw(
+  Concrete[, -1]
+)
+binwidths
+# binwidths %>% summarise(mean = mean(width)) %>% pull(mean)
+```
+
+Vemos que habíamos elegido un valor promedio de `binwidth` adecuado en la gráfica anterior.
+No obstante, podemos analizar individualmente cada uno de los histogramas haciendo uso de `hits(..., breaks="FD")` (usar "FD" hace que se calcule automáticamente el tamaño de las agrupaciones) y dibujando también la normal (en rojo) por encima para verificar si dichas distribuciones se acercan a una normal.
+
+```{r individual-histograms, echo = FALSE}
+sapply(
+  1:8, 
+  function(x) {
+    var.name <- names(Concrete)[x]
+    hist(
+      Concrete[, x],
+      breaks="FD",
+      xlab=var.name,
+      ylab="Frecuencia",
+      main=sprintf("Histograma de la variable \"%s\"", var.name)
+    )
+  }
+)
+```
+```{r individual-histograms-density, echo = FALSE}
+density_plots <- function(ind, dataframe) {
+  #' Draws a histogram + density + normal curve
+  #' 
+  #' @description Given a column-index and a Data.frame, plots the histogram.
+  #' 
+  #' @param ind Integer column-index
+  #' @param dataframe Dataframe (tibble)
+  #' @return curve(dnorm(...)...)
+  data <- dataframe[, ind]
+  var.name <- names(dataframe)[ind] 
+  hist_data <- hist(
+    data,
+    density = 20, 
+    prob = TRUE,
+    breaks="FD",
+    xlab=var.name,
+    main=sprintf("Histograma de \"%s\"", var.name),
+    ylab="Densidad"
+  )
+  lines(
+    density(data),
+    col = 4,
+    lwd = 2,
+  )
+  # https://stackoverflow.com/questions/20078107/overlay-normal-curve-to-histogram-in-r
+  g = data
+  m<-mean(g)
+  std<-sqrt(var(g))
+  curve(dnorm(x, mean=m, sd=std), 
+        col="red", lwd=2, add=TRUE, yaxt="n")
+} 
+sapply(
+  1:8, 
+  density_plots, 
+  Concrete
+)
+```
+
+Vemos algunas distribuciones que aparentan ser bi-modales como "FlyAsh", "BlastFurnaceSlag", "Superplasticizer" y "Age".
+Vemos que tenemos unos cuantos ejemplos que parecen tener casi 1 año de edad (cerca y por-encima de 300 días) aunque la mayoría sea solamente unos pocos días.
+Podemos observar por medio de un boxplot si dichos valores podrían considerarse valores anómalos.
+```{r concrete-edad-300}
+ggplot(Concrete, aes(x=Age)) + geom_boxplot() + coord_flip() + theme_minimal()
+```
+
+```{r age-histogram}
+hist(Concrete$Age, breaks="fd")
+age.over.100 <- length(Concrete$Age[Concrete$Age > 100])
+age.porcentage.over.100 <- age.over.100 / nrow(Concrete)
+print(c(age.over.100, nrow(Concrete), age.porcentage.over.100 * 100))
+```
+
+Se observa que no parece que estemos tratando un problema sobre la capacidad de compresión del concreto con el paso del tiempo según su composición, ya que no disponemos de una distribución uniforme sobre la edad, si no que tenemos una distribución asimétrica a la derecha.
+Para asegurar que la distribución no sigue una normal, podríamos auxiliarnos de test-estadísticos.
+
+```{r age-skewness}
+agostino <- function(x) agostino.test(x)$p
+agostino(scaledConcrete$Age)
+```
+
+El test de D'Agostino nos mide la asimetría de nuestra distribución, nos permite verificar si el comportamiento de una distribución es lejano de una normal.
+En este caso, al tener un p-valor significativamente menor que 0.05 podemos asumir que la variable "Age" no está distribuida como una Normal.
+
+```{r age-kurtosis}
+anscom <- function(x) anscombe.test(x)$p
+anscom(scaledConcrete$Age)
+```
+
+El test de Anscombe nos mide que ante la hipótesis de normalidad, la kurtosis debería ser igual a 3.
+Por lo cuál, al rechazar nos estaría diciendo que presentamos "kurtosis" (podríamos calcular la dirección con `kurtosis` o leer el valor `kurt` del test) y, además, de que podríamos estar ante la presencia de outliers.
+Todo esto nos ayuda a confirmar nuestra hipótesis de que dicha columna no se comporta como una normal.
+Lo podemos terminar de afirmar comprobando que shapiro rechaza.
+
+```{r age-normality}
+shap <- function(x) shapiro.test(x)$p
+shap(scaledConcrete$Age)
+```
+
+Ahora podemos comprobar que también rechazamos para las columnas "FlyAsh", "Superplasticizer" y "BlastFurnaceSlag".
+
+```{r afirmar-columnas-no-normales}
+library(moments)
+library(tidyverse)
+scaledConcrete %>% 
+  select(-ConcreteCompressiveStrength) %>% 
+  summarise(
+    across(
+      everything(),
+      list(
+        skew=skewness,
+        pskew=agostino,
+        kurt=kurtosis,
+        pkurt=anscom,
+        normality=shap
+      )
+    )
+  ) %>% 
+  pivot_longer(cols = everything())
+```
+
+Ninguna de nuestras columnas parece pertenecer a una distribución Normal.
+Además, con los resultados de esta tabla tenemos ciertas ideas de como lidiar con las asimetrías de nuestros datos, ya que una asimetría a la derecha (positiva) se podría arregla con la raíz cuadrada o el logarítmico, mientras que una a la izquierda (negativa) con el cuadrado.
+Además, se observa la posible presencia de outliers en cada una de las columnas debido a los p-valores de asimetría.
+Lo podemos visualizar con los diagramas de caja.
+
+```{r boxplot-all-columns}
+ggplot(data = pivotedConcrete) + 
+  geom_boxplot(aes(x = name, y = value)) + 
+  theme_minimal() + 
+  theme(axis.text.x =element_text(angle=45)) + 
+  labs(x = "Columnas", y = "Dispersión de valores")
+```
+
+## Verificar valores anómalos.
+
+Podemos empezar analizar posibles valores anómalos en la columna "Superplasticizer".
+
+```{r z-score-superplasticizer}
+# Seleccionamos una columna cualquiera para analizar
+indice.columna <- which(names(scaledConcrete) == "Superplasticizer")
+columna = scaledConcrete[, indice.columna]
+# Obtenemos los cuartiles
+cuartil.primero <- quantile(columna, 0.25)
+cuartil.tercero <- quantile(columna, 0.75)
+iqr <- cuartil.tercero - cuartil.primero
+
+# Obtenemos los valores considerados lejanos de la media.
+extremo.superior.outlier.IQR <- cuartil.tercero + 1.5*iqr
+extremo.inferior.outlier.IQR <- cuartil.primero - 1.5*iqr
+extremo.superior.outlier.IQR.extremo <- cuartil.tercero + 3*iqr
+extremo.inferior.outlier.IQR.extremo <- cuartil.primero - 3*iqr
+
+son.outliers.IQR <- 
+  columna < extremo.inferior.outlier.IQR | 
+    columna > extremo.superior.outlier.IQR
+son.outliers.IQR.extremo <- 
+  columna < extremo.inferior.outlier.IQR.extremo | 
+    columna > extremo.superior.outlier.IQR.extremo
+cat("El número de outliers es:", sum(son.outliers.IQR), " y extremos son:",  sum(son.outliers.IQR.extremo), "\n")
+
+test.Grubbs <- grubbs.test(columna, two.sided = TRUE)
+cat("El p-value del test de Grubbs es:", test.Grubbs$p.value, "\n")
+
+valor.posible.outlier <- outlier(columna)
+## Obtenemos el nombre de ese dato
+es.posible.outlier <- outlier(columna, logical = TRUE)
+clave.posible.outlier <- which(es.posible.outlier == TRUE)
+
+## Comprobación del test de normalidad
+scaledConcrete.sin.outlier <- scaledConcrete[-clave.posible.outlier, ]
+
+## Visualizando distribución sin outlier.
+density_plots(indice.columna, scaledConcrete.sin.outlier)
+ggpubr::ggqqplot(scaledConcrete.sin.outlier[, indice.columna]) 
+```
+
+El test de Grubbs nos indica que el valor más alejado de la media proviene de la misma distribución normal que el resto de los datos.
+Al rechazar, nos podría indicar que existe outliers en la "Suplerplasticizer".
+No obstante, no tenemos robustez estadística ya que nuesto distribución subyaciente no es una normal.
+
+```{r extreme-outliers}
+density_plots(5, scaledConcrete[!(son.outliers.IQR | son.outliers.IQR.extremo), ])
+```
+
+Si nos centramos en el "qqplot" vemos un comportamiento que nos indica que quizás durante la experimentación fijaban una cantidad para comprobar los efectos de dicha variable con respecto a la salida.
+Algo similar ocurre con "BlastFurnaceSlag" y "FlyAsh"
+
+```{r qqplot-blastfurnace-flyash}
+ggpubr::ggqqplot(scaledConcrete$BlastFurnaceSlag) + labs(title="BlastFurnaceSlag")
+ggpubr::ggqqplot(scaledConcrete$FlyAsh) + labs(title="FlyAsh")
+ggpubr::ggqqplot(scaledConcrete$Superplasticizer) + labs(title="Superplasticizer")
+```
+
+Esto puede indicarnos que pudiera ser que estuvieran comprobando combinaciones entre estas 3 variables para ver como afectaban a la capacidad de compresión final del concreto.
+Podemos intentar analizar cómo varían las distribuciones de los datos cuando algunas de esas variables es igual a 0.
+
+```{r superplasticizer}
+noplastConcrete <- Concrete %>% 
+  filter(Superplasticizer == 0) %>% 
+  select(-Superplasticizer)
+par(mfrow=c(3,3)) #Si margin too large => (2,3)
+sapply(1:(ncol(noplastConcrete)), density_plots, noplastConcrete)
+print(nrow(noplastConcrete))
+par(mfrow=c(1,1))
+par(mfrow=c(3,3))
+plastConcrete <- Concrete %>% 
+  filter(Superplasticizer != 0) %>% 
+  select(-Superplasticizer)
+sapply(1:(ncol(plastConcrete)), density_plots, plastConcrete)
+par(mfrow=c(1,1))
+print(nrow(plastConcrete))
+```
+
+Vemos que FlyAsh == 0 ocurren el 373 / 379 porciento de las veces.
+
+```{r flyash-super}
+FlyAsh.no <- Concrete %>% 
+  filter(FlyAsh == 0) %>% 
+  select(-FlyAsh)
+par(mfrow=c(3,3)) #Si margin too large => (2,3)
+sapply(1:(ncol(FlyAsh.no)), density_plots, FlyAsh.no)
+print(nrow(FlyAsh.no))
+par(mfrow=c(1,1))
+par(mfrow=c(3,3))
+FlyAsh.yes <- Concrete %>% 
+  filter(FlyAsh != 0) %>% 
+  select(-FlyAsh)
+sapply(1:(ncol(FlyAsh.yes)), density_plots, FlyAsh.yes)
+par(mfrow=c(1,1))
+print(nrow(FlyAsh.yes))
+```
+
+Además, observamos que "FlyAsh" varía cuando "Superplasticizer" varía.
+Y están a 0 cuando una de las dos lo está.
+
+```{r blastfurnace}
+BlastFurnaceSlag.no <- Concrete %>% 
+  filter(BlastFurnaceSlag == 0) %>% 
+  select(-BlastFurnaceSlag)
+par(mfrow=c(3,3)) #Si margin too large => (2,3)
+sapply(1:(ncol(BlastFurnaceSlag.no)), density_plots, BlastFurnaceSlag.no)
+print(nrow(BlastFurnaceSlag.no))
+par(mfrow=c(1,1))
+par(mfrow=c(3,3))
+BlastFurnaceSlag.yes <- Concrete %>% 
+  filter(BlastFurnaceSlag != 0) %>% 
+  select(-BlastFurnaceSlag)
+sapply(1:(ncol(BlastFurnaceSlag.yes)), density_plots, BlastFurnaceSlag.yes)
+par(mfrow=c(1,1))
+print(nrow(BlastFurnaceSlag.yes))
+```
+
+Además, observamos que cuando "BlastFurnaceSlag" es distinto a cero, "FlyAsh" es igual a 0 la mitad de las veces.
+Con esto podemos intuir que podría haber una posible iteracción entre estas variables.
+
+## Búsquedas de Valores Anómalos
+
+```{r test-grubbs}
+test_Grubbs <- function(indice.columna, data.frame, alpha = 0.05){
+  columna <- data.frame[, indice.columna]
+  test.Grubbs = grubbs.test(columna, two.sided = TRUE)
+  p.value <- test.Grubbs$p.value
+  es.outlier <- p.value < 0.05
+  # H0 :El valor más alejado de la media proviene de la misma distribución normal que el resto de datos
+  # El p-value es > 0.05, por lo que el test no puede rechazar
+  ## Obtenemos el nombre de ese dato
+  es.posible.outlier = outlier(columna, logical = TRUE)
+  clave.mas.alejado.media = which(es.posible.outlier == TRUE)
+  valor.mas.alejado.media = columna[clave.mas.alejado.media]
+  
+  ## Comprobación del test de normalidad
+  sin.outlier = data.frame[-clave.mas.alejado.media,]
+  columna.sin.outlier = sin.outlier[, indice.columna]
+  shaptest <- shapiro.test(columna.sin.outlier)  
+  p.value.test.normalidad <- shaptest$p.value
+  es.distrib.norm <- p.value.test.normalidad > alpha
+  list(
+    columna=colnames(data.frame)[indice.columna],
+    clave.mas.alejado.media=clave.mas.alejado.media,
+    valor.mas.alejado.media=valor.mas.alejado.media,
+    es.outlier=es.outlier,
+    p.value=p.value,
+    p.value.test.normalidad=p.value.test.normalidad,
+    es.distrib.norm=es.distrib.norm
+  )
+}
+test_Grubbs(3, scaledConcrete)
+```
+
+```{r view-outliers-all-columns}
+sapply(1:(ncol(scaledConcrete)-1), test_Grubbs, scaledConcrete)
+```
+
+Vemos que ninguna columna parece tener una distribución normal subyaciente.
+Por lo cual, para el análisis de valores anómalos multivariantes no tendremos robustez estadística al recurrir a métodos estadísticos.
+No obstante, utilizaremos métodos basados en densidades y estadísticos para investigar conjuntamente posibles anomalías.
+Además, vemos posibles valores anómalos en todas las variables excepto "BlastFurnaceSlag".
+En total sería 36 posibles valores anómalos.
+Para el análisis de valores anómalos multivariantes evitaremos incluir columnas que sean demasiado lejanas a una normal.
+Para ello, solamente incluiremos "Water", "Cement", "CoarseAggregate" y "FineAggregate".
+
+```{r cqplot-concrete}
+data.approx.norm.scaled <- scaledConcrete %>% select(-Age, -FlyAsh, -BlastFurnaceSlag, -Superplasticizer, -ConcreteCompressiveStrength)
+data.approx.norm <- Concrete %>% select(-Age, -FlyAsh, -BlastFurnaceSlag, -Superplasticizer, -ConcreteCompressiveStrength)
+heplots::cqplot(data.approx.norm.scaled, method = "classical")
+```
+
+Aunque no tengamos una normal multivariante (ninguna de las distribuciones subyacientes es normal) no tenemos una gran desviación de la línea en la gráfica QQ, por lo que podemos calcular valores anómalos multivariantes con el método clásico de distancia malahanobis.
+
+```{r malahanobis}
+dist.mah.clas = heplots::Mahalanobis(data.approx.norm.scaled, method = "classical")
+outliers.mah <- quantile(dist.mah.clas, 0.975)
+es.outlier.mah <- which(dist.mah.clas > outliers.mah)
+print(list(outliers=es.outlier.mah, total=length(es.outlier.mah)))
+```
+
+Observamos un total de 25 posibles valores anómalos multivariantes.
+
+```{r LOF}
+num.vecinos.lof <- 20
+# Quitamos la edad del LOF.
+temp <- scaledConcrete[, c(-8, -9)]
+lof.scores <- DDoutlier::LOF(dataset = temp, k = num.vecinos.lof)
+lof.scores.sorted <- sort(lof.scores, decreasing = TRUE)
+print(c(length(lof.scores), length(lof.scores.sorted)))
+```
+
+Apreciamos un posible conjunto de outliers al principio.
+
+```{r LOF-reduced}
+plot(
+  1:100,
+  lof.scores.sorted[1:100],
+  xlab="Top valores LOF",
+  ylab="Valores LOF"
+)
+```
+
+Sería sensato suponer que podríamos tener aproximadamente 20 valores anómalos multivariantes basado en densidad.
+
+```{r outliers-plot}
+num.outliers <- 20
+claves.outliers.lof <- which(lof.scores >= lof.scores.sorted[num.outliers])
+Concrete[claves.outliers.lof, -9]
+```
+
+Si recordamos nuestro conjunto de datos y sus rangos de valores:
+
+```{r review-data}
+summary(Concrete[, -9])
+```
+
+Vemos que muchos de los outliers encontrados por el método "LOF" son aquellos que tienen valores muy cercanos del extremo en alguna de las variables.
+Para observar solamente aquellos valores que son multivariantes puros podemos hacer una diferencia de conjuntos entre los valores que son anómalos al menos en alguna variable frente a estos.
+
+```{r multi-variantes-puros}
+# Las funciones a continuación son sacadas de haber realizado el laboratorio de anómalias citado a continuación:
+# https://ccia.ugr.es/~carlos/Master/Outliers.html#relaci%C3%B3n-entre-el-m%C3%A9todo-iqr-y-el-test-de-grubbs
+# El autor de las funciones, salvo posibles pequeñas modificaciones, es el profesor Juan Carlos Cubero.
+son_outliers_IQR = function (datos, ind.columna, coef = 1.5){
+  # La idea de esta función es obtener aquellos valores que en la columna 'ind.columna' tienen un valor >1.5*IQR o <1.5*IQR
+  columna.datos = datos[,ind.columna]
+  cuartil.primero = quantile(columna.datos)[2]  
+  #quantile[1] es el mínimo y quantile[5] el máximo.
+  cuartil.tercero = quantile(columna.datos)[4] 
+  iqr = cuartil.tercero - cuartil.primero
+  extremo.superior.outlier = (iqr * coef) + cuartil.tercero
+  extremo.inferior.outlier = cuartil.primero - (iqr * coef)
+  son.outliers.IQR  = columna.datos > extremo.superior.outlier |
+    columna.datos < extremo.inferior.outlier
+  return (son.outliers.IQR)
+}
+claves_outliers_IQR_columna = function(columna,  coef = 1.5){
+  son.outliers.IQR = son_outliers_IQR(as.data.frame(columna), 1, coef)
+  return (which(son.outliers.IQR  == TRUE))
+}
+claves_outliers_IQR = function(datos, ind.columna, coef = 1.5){
+  columna.datos = datos[,ind.columna]
+  return (claves_outliers_IQR_columna(columna.datos, coef))
+}
+claves_outliers_IQR_en_alguna_columna = function(datos, coef = 1.5){
+  df.clave.columnas = data.frame()
+  claves.outliers =  sapply(1:ncol(datos), 
+                               function(x) claves_outliers_IQR(datos, x, coef)
+  )
+  claves.outliers.en.alguna.columna = unlist(claves.outliers)
+  return (claves.outliers.en.alguna.columna)
+}
+# Obtenemos los valores que son anómalos en al menos alguna columna por el método de distancia inter-cuartil.
+claves.outliers.IQR.en.alguna.columna <- 
+  claves_outliers_IQR_en_alguna_columna(Concrete[, c(-8, -9)], 1.5)
+# Obtenemos las claves duplicadas (fila con valores anómalos en varias columnas).
+claves.outliers.IQR.en.mas.de.una.columna <- 
+  unique(
+    claves.outliers.IQR.en.alguna.columna[
+      duplicated(claves.outliers.IQR.en.alguna.columna)]
+)
+# Obtenemos los valores que únicamente son anómalos en 1 columna.
+claves.outliers.IQR.en.alguna.columna <- 
+  unique(claves.outliers.IQR.en.alguna.columna)
+# Aplicamos la diferencia de conjuntos para obtener los multivariantes puros.
+claves.outliers.lof.no.IQR <- setdiff(claves.outliers.lof, claves.outliers.IQR.en.alguna.columna)
+Concrete[claves.outliers.lof.no.IQR, -9]
+```
+
+Estos serían los valores anómalos considerados multivariantes puros.
+Vemos que tampoco parecemos tener muchos.
+En total, tendríamos 9 y podríamos intentar visualizarlos mediante una proyección a dos dimensiones de ellos.
+
+```{r funciones-cubrero}
+# Las funciones a continuación son sacadas de haber realizado el laboratorio de anómalias citado a continuación:
+# https://ccia.ugr.es/~carlos/Master/Outliers.html#relaci%C3%B3n-entre-el-m%C3%A9todo-iqr-y-el-test-de-grubbs
+# El autor de las funciones, salvo posibles pequeñas modificaciones, es el profesor Juan Carlos Cubero.
+biplot_2_colores = function (datos, 
+                             claves.a.mostrar = c(), 
+                             titulo = "",
+                             titulo.grupo.a.mostrar = "Outliers",
+                             colores = c("black","red")){
+  nombres = rownames(datos)
+  claves.datos = c(1:nrow(datos))
+  son.a.mostrar = claves.datos %in% claves.a.mostrar
+  nombres[!son.a.mostrar] = ''
+  
+  PCA.model = princomp(scale(datos))
+  outlier.shapes = c(".","x") 
+  biplot = ggbiplot::ggbiplot(PCA.model,
+                    obs.scale = 1,
+                    var.scale = 1 ,
+                    varname.size = 5,
+                    groups =  son.a.mostrar,
+                    alpha = 1/2) #alpha = 1/10
+  biplot = biplot + labs(color = titulo.grupo.a.mostrar)
+  biplot = biplot + scale_color_manual(values = colores)
+  biplot = biplot + geom_text(label = nombres,
+                              stat = "identity",
+                              size = 3,
+                              hjust=0,
+                              vjust=0)
+  biplot = biplot + ggtitle(titulo)
+}
+
+biplot.outliers.IQR = biplot_2_colores(
+  Concrete[, c(-8, -9)], 
+  claves.outliers.lof.no.IQR, 
+  titulo.grupo.a.mostrar = "Outliers IQR",
+  titulo ="Biplot Outliers IQR"
+)
+biplot.outliers.IQR
+```
+
+La visualización no tiene gran explicación de la variabilidad de los datos por lo cuál no es de fiar. Pero en ella, veríamos los supuestos multivariantes puros.
+Podemos intentar visualizar los valores anómalos en cada variable con su relación con las demás.
+Por ejemplo, visualizar aquellos valores extremos en al menos 1 columna:
+
+```{r outliers-lof}
+plot_2_colores = function (datos, 
+                           claves.a.mostrar, 
+                           titulo = "",
+                           colores = c("black", "red")){
+  
+  num.datos = nrow(as.matrix(datos))
+  seleccionados =  rep(FALSE, num.datos)
+  seleccionados[claves.a.mostrar] = TRUE
+  colores.a.mostrar = rep(colores[1], num.datos)
+  colores.a.mostrar [seleccionados] = colores[2]
+  
+  plot(datos, col=colores.a.mostrar, main = titulo)
+}
+plot_2_colores(
+  Concrete[, c(-8, -9)],
+  claves.outliers.IQR.en.alguna.columna,
+)
+```
+
+Aunque a priori parezcan muchos valores, si nos fijamos en la longitud del vector de valores anómalos tenemos 26 valores.
+
+```{r anomalos}
+length(claves.outliers.IQR.en.alguna.columna)
+```
+
+Si sumamos todos los valores anómalos que hemos ido encontrando, tendríamos un total de:
+
+```{r total-anomalias}
+todas.anomalias <- unique(c(claves.outliers.IQR.en.alguna.columna, es.outlier.mah, claves.outliers.lof.no.IQR))
+length(todas.anomalias)
+```
+
+```{r visualizar-todas-anomalias}
+# png(file="docs/imgs/reg/Anomalias.png", width=7,height=7, units='in', res=300)
+plot_2_colores(
+  Concrete[, c(-8, -9)],
+  todas.anomalias,
+)
+# dev.off()
+```
+
+Vemos que suelen ser valores que se alejan bastante en la variable "Edad".
+Y algunos, son aquellos que se alejan de zonas de mayor densidad.
+Aunque dispongo de poco conocimiento sobre los valores normales para las cantidades de los ingredientes a la hora de crear una buena mezcla de cemento, con todo este análisis y visualizaciones, junto a que disponemos de una buena cantidad de ejemplos (1030), decido eliminar estos valores anómalos de mi conjunto de datos.
+
+```{r remove-anomalies}
+Concrete.clean <- Concrete[-todas.anomalias, ]
+Concrete.clean.scaled <- scaledConcrete[-todas.anomalias, ]
+outliers_value.pred <- set_predictors_name(Concrete[todas.anomalias, ])
+outliers_value <- Concrete[todas.anomalias, ]
+summary(Concrete.clean[, c(-8, -9)])
+```
+
+## Correlación con la variable de salida.
+
+```{r relation-with-output}
+# png(file="docs/imgs/reg/OutputRelation.png", width=7, height=7, units='in', res=300)
+temp <- Concrete.clean
+plotY <- function (x,y) {
+  plot(temp[,y]~temp[,x], xlab=paste(names(temp)[x]," X",x,sep=""), ylab=names(temp)[y])
+}
+par(mfrow=c(3,3)) #Si margin too large => (2,3)
+x <- sapply(1:(dim(temp)[2]-1), plotY, dim(temp)[2])
+par(mfrow=c(1,1)) 
+# dev.off() # close the png file
+```
+
+Observando la relación de las variables con respecto a la salida, observamos algunas posibles relaciones lineales.
+En este caso, destaca "Cement", "Water", "CoarseAggregate" y "FineAggregate".
+La columna "Age" es evidentemente la peor.
+Las demás, parecen tener 2 componentes.
+Una con demasiados valores iguales a 0 y luego otra que si parece comportarse linealmente.
+
+## Regresión Lineal Simples
+
+Como tenemos más de 5 variables predictivas, elegimos aquellos que creemos que más información nos aportaría a la hora de realizar la regresión simples final.
+Elegimos aquellas cuya correlación con la variable predictiva sea más fuerte.
+Además, nos auxiliamos de la descripción del conjunto de datos con respecto al nivel de información que aporta cada variable usando la librería `Hmisc`.
+
+```{r hmisc-concrete}
+Hmisc::describe(Concrete.clean[, -9])
+```
+
+Es decir, nos quedamos con "Cement"(1), "Water"(4), "Superplasticizer"(5), "CoarseAggregate"(6) y "FineAggregate"(7) para obtener modelos lineales simples iniciales.
+
+```{r simple-linear-models}
+# startregion fit_models
+concrete <- set_predictors_name(Concrete.clean.scaled)
+fit1=lm(Y~X1, data=concrete)
+fit1
+
+fit2=lm(Y~X4, data=concrete)
+fit2
+
+fit3=lm(Y~X5, data=concrete)
+fit3
+
+fit4=lm(Y~X6, data=concrete)
+fit4
+
+fit5=lm(Y~X7, data=concrete)
+fit5
+
+summary(fit1)
+# png(file="docs/imgs/reg/SimpleLinear.png", width=7, height=7, units='in', res=300)
+par(mfrow=c(3,2))
+plot(Y~X1, concrete)
+abline(fit1,col="red")
+confint(fit1)
+
+summary(fit2)
+plot(Y~X4, concrete)
+abline(fit2,col="blue")
+confint(fit2)
+
+summary(fit3)
+plot(Y~X5, concrete)
+abline(fit3,col="green")
+confint(fit3)
+
+summary(fit4)
+plot(Y~X6, concrete)
+abline(fit4,col="gray")
+confint(fit4)
+
+summary(fit5)
+plot(Y~X7, concrete)
+abline(fit5,col="violet")
+confint(fit5)
+par(mfrow=c(1,1))
+# dev.off()
+
+mses <- c(
+  fit1=sqrt(sum(fit1$residuals^2)/(length(fit1$residuals))),
+  fit2=sqrt(sum(fit2$residuals^2)/(length(fit2$residuals))),
+  fit3=sqrt(sum(fit3$residuals^2)/(length(fit3$residuals))),
+  fit4=sqrt(sum(fit4$residuals^2)/(length(fit4$residuals))),
+  fit5=sqrt(sum(fit5$residuals^2)/(length(fit5$residuals)))
+)
+smses <- c( 
+  fit1=sqrt(sum(fit1$residuals^2)/(length(fit1$residuals)-2)),#Error estandard de los residuos 
+  fit2=sqrt(sum(fit2$residuals^2)/(length(fit2$residuals)-2)),#Error estandard de los residuos, 
+  fit3=sqrt(sum(fit3$residuals^2)/(length(fit3$residuals)-2)),#Error estandard de los residuos, 
+  fit4=sqrt(sum(fit4$residuals^2)/(length(fit4$residuals)-2)),#Error estandard de los residuos, 
+  fit5=sqrt(sum(fit5$residuals^2)/(length(fit5$residuals)-2)) #Error estandard de los residuos
+)
+print(list(MSE=mses,Standard=smses))
+```
+
+Como podemos observar, y era de esperar, la variable que más correlación con la variable de salida tenía es la que mejores resultados posee.
+Tanto a nivel de la métrica de "R-squared" como a la "raíz de la suma cuadrática de los errores" (RMSE) y su versión estandarizada a los niveles de libertad.
+Es por ello que utilizaremos esta variable como base de nuestro modelo lineal simple al cuál, para crear una regresión múltiple, añadiremos nuevos predictores.
+
+Creamos una función para crear combinación entre las variables predictores y así poder hacer el método de selección hacia-adelante.
+
+```{r fit-simple-linear-models}
+get_linear_models <- function(x, data) { 
+  #' Fit a linear model using a string of predictors.
+  #' 
+  #' @description Adds a string to a formula such as 'Y ~' to fit a linear model
+  #' 
+  #' @param x String with predictos.
+  #' @param data Dataframe (tibble)
+  #' @return lm
+  lm(paste("Y ~", x, sep =" "), data = data)
+}
+fits <- lapply(paste("X", c(1,4,5,6,7), sep = ""), get_linear_models, concrete)
+fits.summary <- lapply(fits, summary)
+fits.summary
+```
+
+Se observa en las tablas anteriores que de los 5 predictores simples elegidos la cantidad de cemento se relaciona mejor con lo que queremos predecir.
+Tiene el menor error cuadrático medio, con 14.5 frente 15.55 de "Superplasticizer".
+Utilizaremos esta variable como base de nuestro método de "forward-selection".
+A continuación, añadiremos variables a nuestro modelo lineal simple.
+
+## Regresión Lineal Múltiple.
+
+Para crear la regresión múltiple primeramente haremos uso de la técnica de selección hacia adelante.
+Dónde iremos añadiendo predictores utilizando las medidas de RSS y el p-valor del test de hipótesis de la t-student, también nos podemos fijar en los valores del test F-estadístico que nos indica si al menos algún predictor es útil.
+
+### Selección hacia adelante.
+
+```{r forward-selection-step1}
+fit_sum_and_sort <- function(pairnames, data) {
+  fits <- lapply(pairnames, get_linear_models, data)
+  names(fits) <- pairnames
+  sum_fits <- lapply(fits, summary)
+  fits_rss <- lapply(fits, function(x) {sum(x$residuals^2)})
+  sorted_ <- order(unlist(fits_rss)) 
+  list(fits[sorted_], sum_fits[sorted_], fits_rss[sorted_])
+}
+# Añadimos nuestro predictor base.
+predictors <- "X1+"
+# Creamos un vector con todos los predictores.
+xnames <- paste("X", 1:(dim(concrete)[2]-1), sep="")
+# Eliminamos aquellos predictores que ya estén elegidos.
+remove_predictors <- function(choosen, available) { 
+  available[!available %in% str_split(choosen, pattern="\\+", simplify = TRUE)[1, ]]
+}
+possible <- remove_predictors(predictors, xnames)
+pairnames <- paste(predictors, possible, sep="")
+comp_fits <- fit_sum_and_sort(pairnames, concrete)
+comp_fits[[2]]
+```
+
+Si nos centramos en los resultados ordenados por el RSS de menor a mayor:
+
+```{r sorted-results-step1}
+comp_fits[[3]]
+```
+
+Cómo era de esperar, una de las variables con mayor relación lineal con la salida es la que mejores resultados da.
+Ahora seguimos este mismo proceso hasta encontrar un p-valor que rechaze.
+
+```{r forward-selection-step2}
+predictors <- "X1+X5+"
+possible <- remove_predictors(predictors, xnames)
+pairnames <- paste(predictors, possible, sep="")
+comp_fits <- fit_sum_and_sort(pairnames, concrete)
+comp_fits[[2]]
+```
+
+```{r test}
+# Verificamos si los p-valores se aceptan o no
+accept_all_coefficients <- function(x){all(x$coefficients[,4] < 0.05)}
+lapply(comp_fits[[2]], accept_all_coefficients)
+```
+
+```{r foward-selection-step3}
+accept <- lapply(comp_fits[[2]], accept_all_coefficients)
+# Añadimos nuestro predictor base.
+predictors <- paste(names(comp_fits[[1]][which(accept == TRUE)[1]]), "+", sep="")
+possible <- remove_predictors(predictors, xnames)
+pairnames <- paste(predictors, possible, sep="")
+comp_fits <- fit_sum_and_sort(pairnames, concrete)
+comp_fits[[2]]
+```
+
+```{r forward-selection-step4}
+accept <- lapply(comp_fits[[2]], accept_all_coefficients)
+# Añadimos nuestro predictor base.
+predictors <- paste(names(comp_fits[[1]][which(accept == TRUE)[1]]), "+", sep="")
+possible <- remove_predictors(predictors, xnames)
+pairnames <- paste(predictors, possible, sep="")
+comp_fits <- fit_sum_and_sort(pairnames, concrete)
+comp_fits[[2]]
+```
+
+```{r forward-selection-step5}
+accept <- lapply(comp_fits[[2]], accept_all_coefficients)
+# Añadimos nuestro predictor base.
+predictors <- paste(names(comp_fits[[1]][which(accept == TRUE)[1]]), "+", sep="")
+possible <- remove_predictors(predictors, xnames)
+pairnames <- paste(predictors, possible, sep="")
+comp_fits <- fit_sum_and_sort(pairnames, concrete)
+comp_fits[[2]]
+```
+ 
+```{r forward-selection-step6}
+accept <- lapply(comp_fits[[2]], accept_all_coefficients)
+# Añadimos nuestro predictor base.
+predictors <- paste(names(comp_fits[[1]][which(accept == TRUE)[1]]), "+", sep="")
+possible <- remove_predictors(predictors, xnames)
+pairnames <- paste(predictors, possible, sep="")
+comp_fits <- fit_sum_and_sort(pairnames, concrete)
+comp_fits[[2]]
+```
+
+Vemos que ya no podemos añadir más predictores a nuestro modelo lineal múltiple ya que el p-valor de los test estadísticos indica que no aportan más información a la hora de resolver nuestro problema.
+Por lo tanto, el predicto final será: "Y \~ X1+X5+X2+X3+X4" Podemos comprobarlo volviendo a ejecutar los pasos pero de forma automática:
+
+```{r forward-selection-auto}
+valid <- TRUE
+predictors <- "X1+"
+xnames <- paste("X", 1:(dim(concrete)[2]-1), sep="")
+possible <- remove_predictors(predictors, xnames)
+pairnames <- paste(predictors, possible, sep="")
+base_fits <- fit_sum_and_sort(pairnames, concrete)
+while(!is.na(valid[1])){
+  predictors <- paste(names(base_fits[[1]])[valid], "+", sep="")
+  possible <- remove_predictors(predictors, xnames)
+  pairnames <- paste(predictors, possible, sep="")
+  base_fits <- fit_sum_and_sort(pairnames, concrete)
+  accept <- lapply(base_fits[[2]], accept_all_coefficients)
+  valid <- which(accept == TRUE)[1]
+}
+print(base_fits[[2]])
+```
+
+Otra forma de comprobarlo sería con el método de selección hacia atrás, donde partimos de todas las variables y luego vamos eliminando.
+### Selección hacia atrás.
+
+```{r backward-selection-step1}
+# Partimos de -X8 ya que no incluiremos este predictor según el EDA
+fits <- list(lm("Y ~ .", data = concrete))
+sum_fits <- lapply(fits, summary)
+fits_rss <- lapply(fits, function(x) {sum(x$residuals^2)})
+sorted_ <- order(unlist(fits_rss)) 
+list(fits[sorted_], sum_fits[sorted_], fits_rss[sorted_])
+```
+
+Si observamos la tabla, el test estadístico nos indica que podemos eliminar la variable X6.
+
+```{r backward-selection-step2}
+fits <- list(lm("Y ~ .-X6", data = concrete))
+sum_fits <- lapply(fits, summary)
+fits_rss <- lapply(fits, function(x) {sum(x$residuals^2)})
+sorted_ <- order(unlist(fits_rss)) 
+list(fits[sorted_], sum_fits[sorted_], fits_rss[sorted_])
+```
+
+Ahora vemos que podemos eliminar la variable X7.
+
+```{r backward-selection-step3}
+fits <- list(lm("Y ~ .-X6-X7", data = concrete))
+sum_fits <- lapply(fits, summary)
+fits_rss <- lapply(fits, function(x) {sum(x$residuals^2)})
+sorted_ <- order(unlist(fits_rss)) 
+list(fits[sorted_], sum_fits[sorted_], fits_rss[sorted_])
+```
+
+Y ahora vemos que no podemos eliminar ninguna variable, similar a la selección hacia adelante obtenemos "Y \~ X1 + X2 + X3 + X4 + X5".
+
+## Iteracciones
+
+Para añadir posibles iteracciones nos fijaremos en posibles correlaciones entre las variables predictoaras.
+
+```{r correlation-between-predictors}
+# png(file="docs/imgs/reg/Correlacion.png", width=7, height=7, res=300, units='in')
+temp <- Concrete.clean.scaled[, c(-8,-7,-6)]
+plot(temp[,-dim(temp)[2]],pch=16,col=gray(1-(temp[,dim(temp)[2]]/max(temp[,dim(temp)[2]]))))
+# dev.off()
+```
+Vemos una posible interacción entre "Suplerplasticizer" y "Water", "Water" y "Cement".
+Lo podemos ver mejor con una matriz de correlación.
+
+```{r corr-plot}
+# png(file="docs/imgs/reg/CorrelacionMat.png", width=7, height=7, units='in', res=300)
+cor_matrix <- cor(temp[, -6])
+# library(mvoutlier) # corr.plot 
+corrplot(cor_matrix)
+# dev.off()
+```
+
+Esta información nos ayuda a definir posibles interacciones entre las variables predictoras.
+En este caso, intentaremos añadi la iteracción entre "Superplasticizer", "Water" y "FlyAsh"
+
+```{r iteraction-step1}
+fits <- list(lm("Y ~.-X6-X7 + X4*X5*X3", data = concrete))
+sum_fits <- lapply(fits, summary)
+fits_rss <- lapply(fits, function(x) {sum(x$residuals^2)})
+sorted_ <- order(unlist(fits_rss)) 
+list(fits[sorted_], sum_fits[sorted_], fits_rss[sorted_])
+```
+
+Observamos que los p-valores son correctos y además obtenemos una reducción del error residual estándar, validando la elección de esta interacción.
+
+## No-linealidad
+
+Si observamos el comportamiento de los residuos de nuestro modelo:
+
+```{r view-residuals-plot}
+# png(file="docs/imgs/reg/Residuals.png", width=7, height=7, units='in', res=300)
+fits <- list(lm(Y ~.-X6-X7 + X4*X5*X3, data = concrete))
+yprime=predict(fits[[1]], concrete) #Valores estimados para todos los datos
+# Podemos también mirar el comportamiento de los residuos
+par(mfrow=c(1,1)) 
+model <- fits[[1]]
+res <- residuals(model)
+ggplot(concrete, aes(x = fitted(model), y = res)) +
+  geom_point() +  
+  geom_smooth(method = "loess", formula = y ~ x, color = "red") +  
+  geom_quantile(aes(y = res), quantiles = c(0.05, 0.95), color = "blue", method="rq") +
+  theme_minimal() +
+  labs(title = "Residual Plot", x = "Fitted Values", y = "Residuals")
+# dev.off()
+```
+
+Observamos cierta heterocedasticidad de los residuos, ya que en la parte derecha empiezan a dispersarse, lo que puede indiciar que deberíamos investigar la necesidad de aplicar cierta no linealidad en la respuesta a predecir (por ejemplo, predecir la raíz cuadrada de la capacidad de compresión nos daría unos residuos menos heterocedasticos).
+
+```{r view-residuals-plot-sqrt}
+# png(file="docs/imgs/reg/ResidualsLog.png", width=7, height=7, units='in', res=300)
+temp_r <- concrete %>% mutate(Y = sqrt(Y))
+#  X1+X5+X2+X3+X4+X7
+fits <- list(lm(Y ~.-X6-X7 + X4*X5*X3, data = temp_r))
+model <- fits[[1]]
+summary(model)
+res <- residuals(model)
+ggplot(temp_r, aes(x = fitted(model), y = res)) +
+  geom_point() +  
+  geom_smooth(method = "loess", formula = y ~ x, color = "red") +  
+  geom_quantile(aes(y = res), quantiles = c(0.05, 0.95), color = "blue", method="rq") +
+  theme_minimal() +
+  labs(title = "Residual Plot", x = "Fitted Values", y = "Residuals")
+# dev.off()
+```
+
+No obstante, al hacer dicha transformación vemos que aparece un patrón no lineal en los residuos que tendríamos que intentar corregir. 
+Y con polinomios de grado 2, 3 e incluso 4 no hemos logrado corregir.
+Es por ello, que decido no transformar la salida y no añadir ninguna no-linealidad más con fin de evitar sobre-ajustar el modelo.
+
+## Validación Cruzada
+
+```{r fold-function}
+read_train_test <- function(i, x, tt = "test", remove.train.outliers=FALSE) {
+  # Leemos los datos de entrenamiento
+  file <- paste(x, "-5-", i, "tra.dat", sep="")
+  x_tra <- read.csv(file, comment.char="@", header=FALSE)
+  # Leemos los datos de test 
+  file <- paste(x, "-5-", i, "tst.dat", sep="")
+  x_tst <- read.csv(file, comment.char="@", header=FALSE)
+  in_names <- length(names(x_tra)) - 1
+  names(x_tra)[1:in_names] <- paste ("X", 1:in_names, sep="")
+  names(x_tra)[in_names+1] <- "Y"
+  if(remove.train.outliers == TRUE){
+    # Remove the outliers from the training dataset
+    x_tra <- anti_join(x_tra, outliers_value.pred, by=colnames(x_tra))
+  } 
+  # We do not remove the outliers from the test sets. 
+  names(x_tst)[1:in_names] <- paste ("X", 1:in_names, sep="")
+  names(x_tst)[in_names+1] <- "Y"
+  if (tt == "train") {
+    test <- x_tra
+  }
+  else {
+    test <- x_tst
+  }
+  list(train=x_tra, test=test)
+}
+```
+
+## K-NN
+
+```{r knn-fold}
+nombre <- "concrete/concrete"
+run_knn_fold <- function(i, x, tt = "test", remove.train.outliers=FALSE) {
+  data = read_train_test(i, x, tt, remove.train.outliers=remove.train.outliers)
+  train <- data$train
+  test <- data$test
+  # Normalizamos los conjuntos de datos con Z-score
+  mus <- sapply(dplyr::select(train, -Y), mean)
+  devs <- sapply(dplyr::select(train, -Y), sd)
+  train[, 1:(ncol(train)-1)] <- lapply(1:(ncol(train)-1), function(i) {(train[,i] - mus[i] ) / devs[i]})
+  # Normalizamos el conjunto de entrenamiento usando la media y desv de Train
+  test[, 1:(ncol(test)-1)] <- lapply(1:(ncol(test)-1), function(i) {(test[,i] - mus[i] ) / devs[i]})
+  fitmulti=kknn(Y~.,train,test)
+  yprime=fitmulti$fitted.values
+  rss <- sum((test$Y - yprime)^2)
+  tss <- sum((test$Y - mean(test$Y))^2)
+  # Cómputamos las métricas
+  c(MSE=rss/length(yprime), R=1-(rss/tss))
+  # sum(abs(test$Y-yprime)^2)/length(yprime) ##mse
+}
+knntrain <- sapply(1:5,run_knn_fold,nombre,"train", remove.train.outliers=TRUE)
+knnmsetrain <- mean(knntrain[1,])
+knnRtrain <- mean(knntrain[2,])
+knntest <- sapply(1:5,run_knn_fold,nombre,"test", remove.train.outliers=TRUE)
+knnmsetest <- mean(knntest[1,])
+knnRtest <- mean(knntest[2,])
+print(
+  list(
+    train=
+      c(
+        MSE=knnmsetrain,
+        R=knnRtrain
+      ),
+      test=c( 
+        MSE=knnmsetest,
+        R=knnRtest
+        )
+  )
+)
+```
+
+## Regresión Múltiple
+
+```{r lm-fold}
+run_lm_model_fold <- function(i, x, model="Y~.", tt = "test", remove.train.outliers = FALSE) {
+  data <- read_train_test(i, x, tt, remove.train.outliers=remove.train.outliers)
+  fitmulti=lm(model,data$train)
+  yprime=predict(fitmulti,data$test)
+  rss <- sum((data$test$Y - yprime)^2)
+  tss <- sum((data$test$Y - mean(data$test$Y))^2)
+  c(MSE=rss/length(yprime), R=1-(rss/tss))
+  # sum(abs(data$test$Y-yprime)^2)/length(yprime) ##mse
+}
+model = "Y ~.-X6-X7 + X4*X5*X3"
+lmtrain <- sapply(1:5,run_lm_model_fold,nombre, model, "train", remove.train.outliers=TRUE)
+lmmsetrain <- mean(lmtrain[1, ])
+lmRtrain <- mean(lmtrain[2, ])
+lmtest <- sapply(1:5,run_lm_model_fold,nombre, model, "test", remove.train.outliers=TRUE)
+lmmsetest <- mean(lmtest[1, ])
+lmRtest <- mean(lmtest[2, ])
+print(
+  list(
+    train=c( 
+      MSE=lmmsetrain, 
+      R = lmRtrain
+    ), test=c( 
+      MSE=lmmsetest, 
+      R = lmRtest
+    )
+  )
+)
+```
+
+## Comparativa
+
+```{r base-knn-model}
+# Obtenemos los valores base sin variar el dataset de entrenamiento
+base_knn = "Y ~."
+base_knntrain <- sapply(1:5,run_knn_fold,nombre,"train", remove.train.outliers=FALSE)
+base_knnmsetrain <- mean(knntrain[1,])
+base_knnRtrain <- mean(knntrain[2,])
+base_knntest <- sapply(1:5,run_knn_fold,nombre,"test", remove.train.outliers=FALSE)
+base_knnmsetest <- mean(knntest[1,])
+base_knnRtest <- mean(knntest[2,])
+print(
+  list(
+    train=
+      c(
+        MSE=base_knnmsetrain,
+        R=base_knnRtrain
+      ),
+      test=c( 
+        MSE=base_knnmsetest,
+        R=base_knnRtest
+        )
+  )
+)
+```
+
+```{r base-lm-model}
+# Obtenemos los valores base sin variar el dataset de entrenamiento
+base_lm = "Y ~."
+base_lmtrain <- sapply(1:5,run_lm_model_fold,nombre, base_lm, "train", remove.train.outliers=FALSE)
+base_lmmsetrain <- mean(base_lmtrain[1, ])
+base_lmRtrain <- mean(base_lmtrain[2, ])
+base_lmtest <- sapply(1:5,run_lm_model_fold,nombre, base_lm, "test", remove.train.outliers=FALSE)
+base_lmmsetest <- mean(base_lmtest[1, ])
+base_lmRtest <- mean(base_lmtest[2, ])
+print(
+  list(
+    train=c( 
+      MSE=base_lmmsetrain, 
+      R = base_lmRtrain
+    ), test=c( 
+      MSE=base_lmmsetest, 
+      R = base_lmRtest
+    )
+  )
+)
+```
+
+```{r read-csv-and-overwrite-lm-knn}
+#leemos la tabla con los errores medios de test
+resultados <- read.csv("regr_test_alumnos.csv")
+tablatst <- cbind(resultados[,2:dim(resultados)[2]])
+colnames(tablatst) <- names(resultados)[2:dim(resultados)[2]]
+rownames(tablatst) <- resultados[,1]
+ind.alg <- which(rownames(tablatst) == "concrete")
+tablatst[ind.alg, "out_test_lm"] <- base_lmmsetest
+tablatst[ind.alg, "out_test_kknn"] <- base_knnmsetest
+tablatst
+
+#leemos la tabla con los errores medios de entrenamiento
+resultados <- read.csv("regr_train_alumnos.csv")
+tablatra <- cbind(resultados[,2:dim(resultados)[2]])
+colnames(tablatra) <- names(resultados)[2:dim(resultados)[2]]
+rownames(tablatra) <- resultados[,1]
+tablatra[ind.alg, "out_train_lm"] <- base_lmmsetrain
+tablatra[ind.alg, "out_train_kknn"] <- base_knnmsetrain
+tablatra
+```
+
+```{r test-estadistico}
+difs <- (tablatst[,1] - tablatst[,2]) / tablatst[,1]
+wilc_1_2 <- cbind(ifelse (difs<0, abs(difs)+0.1, 0+0.1), ifelse (difs>0, 	abs(difs)+0.1, 0+0.1))
+colnames(wilc_1_2) <- c(colnames(tablatst)[1], colnames(tablatst)[2])
+head(wilc_1_2)
+
+#Aplicaci�n del test de WILCOXON
+LMvsKNNtst <- wilcox.test(wilc_1_2[,1], wilc_1_2[,2], alternative = "two.sided", paired=TRUE)
+Rmas <- LMvsKNNtst$statistic
+pvalue <- LMvsKNNtst$p.value
+LMvsKNNtst <- wilcox.test(wilc_1_2[,2], wilc_1_2[,1], alternative = "two.sided", paired=TRUE)
+Rmenos <- LMvsKNNtst$statistic
+Rmas
+Rmenos
+pvalue
+
+#Aplicaci�n del test de Friedman
+test_friedman <- friedman.test(as.matrix(tablatst))
+test_friedman
+
+#Aplicaci�n del test post-hoc de HOLM
+tam <- dim(tablatst)
+groups <- rep(1:tam[2], each=tam[1])
+pairwise.wilcox.test(as.matrix(tablatst), groups, p.adjust = "holm", paired = TRUE)
+```

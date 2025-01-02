@@ -1,0 +1,322 @@
+---
+title: "EDA_Dia_2"
+author: "Brian Sena Simons"
+date: "2024-10-09"
+output: pdf_document
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+## Setup
+
+Importamos todo lo que vayamos a utilizar.
+
+```{r setup, include=FALSE, echo=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(tidyverse) # for tidyverse operations
+library(ggplot2) # for plotting
+library(ggpubr)
+library(moments) # for skewness/kurtosis
+library(dlookr)
+library(ggstatsplot)
+library(gmodels)
+```
+
+## Credit Cards
+
+Importamos los datos que hemos descargado en nuestro directorio. Para
+ello debemos verificar en qué directorio estamos y setearlo
+correctamente.
+
+```{r read_directory}
+getwd()
+setwd("/home/briansenas/Master/CienciaDatos/EDA/Dia2/")
+credit_cards <- read.csv("CreditCardClient.csv")
+```
+
+Intentamos observar si nuestro conjunto de datos se ha leído
+correctamente:
+
+```{r observe-read-csv}
+head(credit_cards, n = 5)
+```
+
+Al ver que no hemos leído correctamente el nombre de las columnas
+tenemos que volver a intentar seteando los argumentos correctos.
+
+```{r fix-wrong-colnames}
+credit_cards <- read.csv("CreditCardClient.csv", header = TRUE, skip = 1)
+head(credit_cards, n = 5)
+```
+
+Verificamos también los nombres de las columnas:
+
+```{r read-col-names}
+colnames(credit_cards)
+```
+
+Ahora podemos empezar a realizar el análisis. Primeramente, verificamos
+las dimensiones del mismo:
+
+```{r read-data-dimensions}
+dim(credit_cards)
+```
+
+Tenemos un total de 30.000 filas y 25 columnas. Verificamos el tipo de
+esas variables:
+
+```{r get-data-str}
+credit_cards %>% str
+```
+
+Vemos que todas las variables parecen ser numéricas, no obstante podría
+ser el caso de que fueran variables categóricas que tuvieramos que
+convertir a factor, como probablemente lo sea el sexo, la educación, el
+estado civil... Pero, primeramente, verificamos los valores faltantes
+conforme al guión:
+
+```{r find-missing-values}
+sapply(credit_cards, function(x) any(is.na(x)))
+```
+
+No disponemos de valores faltantes para ninguna de nuestras variables
+numéricas. Podemos hacer el summary de los datos para observar las
+medidas de centralidad y dispersión:
+
+```{r data-summary}
+summary(credit_cards)
+```
+
+Evidentemente, al igual que habíamos comentado anteriormente, tenemos
+que las columnas "SEX", "EDUCATION", "MARRIAGE", las "PAY\_[0-9]+" y la
+"default.payment.next.month" son categóricas.\
+Las convertimos a factor:
+
+```{r convert-factor-columns}
+credit_cards <- 
+  credit_cards %>%
+  mutate(
+    across(
+      c(
+        SEX,
+        MARRIAGE,
+        default.payment.next.month,
+        PAY_0,
+        PAY_2,
+        PAY_3,
+        PAY_4,
+        PAY_5,
+        PAY_6,
+        ),
+      list(as.factor),
+      .names = "{.col}"
+    )
+  ) 
+credit_cards <- 
+  credit_cards %>%
+  mutate(
+    EDUCATION = factor(EDUCATION, ordered = TRUE)
+  )
+str(credit_cards)
+```
+
+### Nos centramos en la variable EDUCATION
+
+Veamos el histograma de la variable "EDUCATION":
+
+```{r histograma-variable-education, warning=FALSE}
+credit_cards %>% 
+  ggplot(aes(x = EDUCATION)) +
+  geom_histogram(stat = "count") + 
+  theme_minimal() + 
+  labs(
+    title = "Histograma sobre la Educación",
+    x = "Nivel de Educación",
+    y = "Frecuencia"
+  )
+```
+
+Parece ser que tenemos un poco de "asimetría positiva" dada la elevada
+frecuencia de nivel de educación. Podemos verificar utilizando tests
+estadísticos de asimetría:
+
+```{r skewness}
+n_education <- as.numeric(credit_cards$EDUCATION)
+agostino.test(n_education)
+```
+
+```{r kurtosis}
+anscombe.test(n_education)
+```
+
+Con ambos test vemos que la columna EDUCATION no parece seguir una
+distribución normal si no que es asimétrica y probablemente tenga
+presencia de outliers.\
+
+Además, con la información del documento vemos que debería tener valores
+de 1-4. Esto nos indica que quizás los valores 5 y 6 sean sinónimos de
+valores faltantes que han utilizado valores fuera de rango para
+denotarlo así o que quizás se hayan equivocado en las mediciones.
+
+```{r verify-education-values}
+table(credit_cards$EDUCATION)
+```
+
+```{r quantiles}
+quantile(credit_cards$EDUCATION, type = 3)
+```
+
+```{r median-mad}
+print(c(median(as.numeric(credit_cards$EDUCATION)), mad(as.numeric(credit_cards$EDUCATION))))
+```
+
+### Nos centramos en la variable MARRIAGE
+
+```{r table-r}
+table(credit_cards$MARRIAGE)
+```
+
+Tenemos un caso similar al anterior, dónde tenemos algunos valores que
+no deberían estar presentes dada la definición del campo. En este caso,
+podríamos suponer que el valor 0 sea el por omisión del formulario
+cuando no se rellena ese campo (es decir, es un valor faltante). De esta
+forma, podríamos eliminar dicho valor.
+
+```{r remembering}
+head(credit_cards, n = 5)
+```
+
+Tratamos los casos anteriores con el criterio de valor faltante para
+MARRIAGE y agrupamos EDUCATION 5 y 6 en OTROS (4)
+
+```{r set-data}
+# https://stackoverflow.com/questions/13868963/clip-values-between-a-minimum-and-maximum-allowed-value-in-r
+fence <- function(vec, UB=7, LB=3) pmax( LB, pmin( vec, UB))
+credit_cards$EDUCATION <- as.factor(fence(as.numeric(credit_cards$EDUCATION), 4, 1))
+table(credit_cards$EDUCATION)
+```
+
+Hacemos un summary de todo el dataset
+
+```{r summarise-dataset}
+summary(credit_cards)
+```
+
+```{r plot-normality-limit-bal}
+credit_cards %>% group_by(SEX) %>% plot_normality(LIMIT_BAL)
+```
+
+```{r histograms}
+credit_cards <- credit_cards %>% 
+  mutate(
+  SEX_NAMED = recode(
+    SEX,
+    "1" = "FEMALE",
+    "2" = "MALE"
+  ), 
+  EDUCATION_NAMED = recode(
+    EDUCATION, 
+    "1" = "Graduate school",
+    "2" = "University",
+    "3" = "High School",
+    "4" = "Others"
+  ),
+  MARRIAGE_NAMED = recode(
+    MARRIAGE, 
+    "0" = "No Response",
+    "1" = "Married",
+    "2" = "Single",
+    "3" = "Others"
+  ),
+  # Normalize the column to help with plotting
+  LIMIT_BAL_NORM = (LIMIT_BAL - mean(LIMIT_BAL)) / sd(LIMIT_BAL),
+  BILL_AMT1_NORM = (BILL_AMT1 - mean(BILL_AMT1)) / sd(BILL_AMT1),
+  PAY_AMT1_NORM = (PAY_AMT1 - mean(PAY_AMT1)) / sd(PAY_AMT1)
+)
+ggplot(credit_cards, aes(x = LIMIT_BAL_NORM, color = EDUCATION_NAMED)) +
+geom_histogram(binwidth = .25, position = "dodge") +
+theme_minimal() + 
+facet_wrap(~ SEX_NAMED + EDUCATION_NAMED, ncol = 4)
+```
+
+```{r plot-pay}
+ggplot(credit_cards, aes(x = PAY_0, color = EDUCATION_NAMED)) +
+geom_bar(stat = "count") +
+theme_minimal() + 
+facet_wrap(~ SEX_NAMED + EDUCATION_NAMED, ncol = 4)
+```
+
+```{r bill-amt}
+ggplot(credit_cards, aes(x = BILL_AMT1)) + geom_boxplot(aes(fill = SEX_NAMED)) + coord_flip()
+```
+
+Vemos que aunque parece estar cercas las distribuciones para ambos
+géneros, hay una gran dispersión de datos. BILL_AMT es altamente
+asimétrico y con kurtosis positiva. Probablemente entre dentro del
+conjunto de columnas que debemos eliminar outliers si dichas anomalías
+no representan información relevante al problema a tratar. Además, el
+nombre indica algún tipo de "cuenta" / "multa". ¿Tiene sentido valores
+negativos? ¿Pueden que signifiquen pagos por adelantado?.
+
+Algo parecido pasa con las demás variables como PAY_AMT1
+
+```{r pay-amt}
+ggplot(credit_cards, aes(x = PAY_AMT1)) + geom_boxplot(aes(fill = SEX_NAMED)) + coord_flip()
+```
+
+Donde la dispersión es aún más pronunciada.
+
+```{r review-with-ggbetweenplot}
+ggbetweenstats(
+  credit_cards, 
+  x = SEX_NAMED, 
+  y = PAY_AMT1, 
+  type = "np"
+)
+```
+
+```{r bill-amt}
+ggbetweenstats(
+  credit_cards, 
+  x = SEX_NAMED, 
+  y = BILL_AMT1, 
+  type = "np"
+)
+```
+
+### Verificamos la correlación de los datos.
+
+```{r correlation, warning=FALSE}
+cor_func <- function(x) { 
+  cor.test(x, as.numeric(credit_cards$default.payment.next.month), method="spearman")$p.value
+}
+tests <- credit_cards %>% 
+  select(-ID,-LIMIT_BAL_NORM, -PAY_AMT1_NORM, -BILL_AMT1_NORM) %>%
+  summarize(
+    across(where(is.numeric), list(pvalue = cor_func))
+    )
+head(tests)
+```
+
+Parece ser que todas las columnas PAY_AMT[0-9]+, LIMIT_BAL, BIL_AMT1,
+BILL_AMT2, BIL_AMT3 tienen correlación con la variable de salida.
+
+```{r regresion-lineal}
+credit_cards_scaled <- credit_cards %>%
+  select(PAY_AMT1, PAY_AMT2, PAY_AMT3, PAY_AMT4, PAY_AMT5, PAY_AMT6, LIMIT_BAL, BILL_AMT1, BILL_AMT2, BILL_AMT3) %>%
+  mutate(across(where(is.numeric), scale)) 
+str(credit_cards_scaled)
+```
+
+```{r lm-model}
+modelo <- lm(as.numeric(credit_cards$default.payment.next.month) ~ ., data = credit_cards_scaled)
+summary(modelo)
+```
+
+Vemos que no hemos logrado obtener un buen modelo, por lo que
+probablemente queda mucho por explorar de los datos que disponemos y
+hemos utilizado. Quizás revisar la posibilidad de eliminar los valores
+anómalos, la correlación entre las variables elegidas y revisar los
+tests y análisis anteriores.

@@ -1,0 +1,10 @@
+receta,ingrediente,cantidad,unidad,es_liquido,factor_cantidad
+alubias,A,1,g,0,poco
+alubias,B,2,ml,1,mucho
+alubias,C,3,g,0,poco
+tortilla,A,1,g,0,poco
+tortilla,B,2,ml,1,poco
+tortilla,C,3,g,0,poco
+risotto,A,1,g,0,poco
+risotto,B,2,ml,1,poco
+risotto,C,3,g,0,poco

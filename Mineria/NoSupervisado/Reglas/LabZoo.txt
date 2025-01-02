@@ -1,0 +1,9 @@
+Con mamíferos:
+[21]	{toothed=FALSE, backbone=TRUE, catsize=FALSE}	=>	{type=bird}	0.1386139	1.0000000	0.1386139	5.050000	14
+[30]	{toothed=FALSE, backbone=TRUE, catsize=FALSE}	=>	{feathers=TRUE}	0.1386139	1.0000000	0.1386139	5.050000	14
+
+Tras eliminar el grupo de mamíferos:
+[5]	{toothed=FALSE, venomous=FALSE, tail=TRUE}	=>	{feathers=TRUE}	0.3333333	0.9523810	0.3500000	2.857143	20
+[6]	{toothed=FALSE, venomous=FALSE, tail=TRUE}	=>	{type=bird}	0.3333333	0.9523810	0.3500000	2.857143	2
+[5]	{toothed=TRUE, legs=no_legs}	=>	{venomous=FALSE}	0.2166667	0.8125000	0.2666667	0.9375000	13
+

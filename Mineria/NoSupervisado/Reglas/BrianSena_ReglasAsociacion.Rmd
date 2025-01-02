@@ -1,0 +1,150 @@
+---
+title: "Laboratorio1_ReglasAsociacion"
+author: "Brian Sena Simons"
+date: "2024-10-23"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introducción
+Cargamos los datos 
+
+```{r datos-libraria}
+library(arules)
+data("AdultUCI")
+```
+
+Obtenemos información básica del dataset
+
+```{r resumen-original}
+summary(AdultUCI)
+```
+De este dataset se supone que debemos eliminar columnas redundantes como: 
+fnlwgt y education-num
+
+```{r eliminar-columnas-redundantes}
+df <- AdultUCI
+df <- df[!(colnames(df) %in% c("fnlwgt", "education-num"))]
+print(df)
+```
+
+Luego tenemos que dividir las columnas en rangos de valores 
+- age: Lo cortamos en los niveles Young (0-25], Middle-aged (2645], Senior (45-65] y Old (65+). 
+- hours-per-week: Lo cortamos en los niveles Part-time (0-25], Fulltime (26-40], Over-time (40-60] y Too-much (60+). 
+- capital-gain and capital-losseach: Lo cortamos en los  niveles None (0), Low (0, mediana de los valores mayores que 0]  y High (>mediana). 
+
+```{r creamos-los-factores-ordenados}
+df[["age"]] <- ordered(
+  cut(
+    unlist(df["age"]),
+    breaks=c(0, 25, 45, 65, 100),
+    left=FALSE,
+    right=TRUE
+  ), 
+  labels=c("Young", "Middle-aged", "Senior", "Old")
+)
+df[["hours-per-week"]] <- ordered(
+  cut(
+    unlist(df["hours-per-week"]),
+    breaks=c(0, 25, 40, 60, 168),
+    left=FALSE,
+    right=TRUE
+  ), 
+  labels=c("Part-time", "Fulltime", "Over-time", "Too-much")
+)
+df[["capital-gain"]] <-  ordered(
+  cut(
+    df[["capital-gain"]],  
+    breaks=c(-Inf,0,median(df[["capital-gain"]][df[["capital-gain"]]>0]), Inf)
+    ),  
+    labels = c("None", "Low", "High")
+  )
+df[["capital-loss"]] <-  ordered(
+  cut(
+    df[["capital-loss"]],  
+    breaks=c(-Inf,0,median(df[["capital-loss"]][df[["capital-loss"]]>0]), Inf)
+    ),  
+    labels = c("None", "Low", "High")
+  )
+```
+
+```{r resumen-factores}
+summary(df)
+```
+Calculamos los itemsets frecuentes para apriori
+```{r itemsets-frecuentes}
+Adult <- as(df, "transactions") 
+itemFrequencyPlot(Adult, support = 0.1, cex.names=0.8)
+```
+Ahora podemos calcular un el apriori
+```{r apriori}
+iAdult <- apriori(Adult, parameter = list(support = 0.1, target="frequent")) 
+iAdult <- sort(iAdult, by="support")  # Los ordenamos por el valor del soporte 
+inspect(head(iAdult, n=50))              # Inspeccionamos los 10 primeros 
+``` 
+```{r visualize-apriori}
+barplot(table(size(iAdult)), xlab="itemset size", ylab="count") 
+```
+Vemos que tenemos muchísimas reglas. Podemos minimizar el número de reglas
+utilizando los conjuntos cerrados y maximales
+```{r conjuntos-cerrados-maximales}
+imaxAdult <- iAdult[is.maximal(iAdult)] 
+icloAdult <- iAdult[is.closed(iAdult)] 
+barplot( c(frequent=length(iAdult), closed=length(icloAdult),  maximal=length(imaxAdult)), ylab="count", xlab="itemsets") 
+```
+```{r extraemos-reglas}
+rules <- apriori(Adult, parameter = list(support = 0.1, confidence = 0.8, minlen = 2)) 
+inspect(head(sort(rules, by="support")))
+```
+
+Análisis post-resultado:
+- Verificamos el número de reglas de cada longitud.
+- Verificamos una estadística del soporte, confianza y lift.
+  - Recordar que un lift > 1 es relación dependiente y < 0 negativa.
+
+```{r summary-rules}
+summary(rules)
+```
+De esta totalidad de reglas podemos hacer un corte por un umbral según alguna 
+métrica como "lift" para obtener las reglas más relevantes para nuestro problema.
+```{r rules-subset}
+rulesSorted = sort(rules, by = "confidence") 
+rulesRaceWhite <- subset(rules, subset = lhs %in% "race=White" & lift > 1.2)  
+inspect(head(rulesRaceWhite))
+``` 
+
+Eliminamos las reglas redundantes:
+- Existe una regla más general y confianza mayor.
+```{r eliminar-reglas-redundantes}
+redundant <- is.redundant(x = rulesSorted, measure = "confidence") 
+rulesPruned <- rulesSorted[!redundant]  # remove redundant rules 
+summary(rulesPruned)
+```
+También podemos utilizar otras medidas:
+```{r interest-measures}
+mInteres <- interestMeasure(
+  rulesPruned,
+  measure=c("hyperConfidence", "leverage", "phi", "gini"),
+  transactions=Adult) 
+quality(rulesPruned) <- cbind(quality(rulesPruned), mInteres) 
+inspect(head(sort(rulesPruned, by="phi"))) 
+```
+
+
+# Comentarios
+Él cargaría las clases mayoritarias (p.e la raza blanca en nuestros datos). 
+De forma que así podríamos realizar un análisis sobre las clases minoritarias.
+Siempre podemos volver al conjunto de datos original si fuera necesario.
+
+No más de 10 o 15 páginas en los trabajos. Hay que resumir y aplicar las técnicas
+de forma coherente y lógicas.
+
+Hay que utilizar la base de datos que más nos guste a nosotros (p.e basketball).
+Luego hay que analizar enteramente esa base de datos.
+NO USAR SOLAMENTE LOS PASOS DEL GUION. Es posible que sea necesario filtrar columnas etc..
+
+También podemos intentar visualizar las reglas obtenidas.
+

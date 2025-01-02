@@ -1,0 +1,686 @@
+---
+title: "EDAClasificación"
+author: "Brian Sena Simons"
+date: "2024-11-24"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r libraries, echo = FALSE, warning = FALSE}
+library(dplyr)
+library(tidyverse)
+library(ggplot2)
+library(caret)
+library(GGally)
+library(ggthemes)
+library(corrplot)
+library(kknn)
+library(moments)
+library(outliers)  # Grubbs
+library(class)
+library(MASS)
+set.seed(140421)
+```
+
+# Introducción
+
+El conjunto de datos Haberman contiene información de un estudio realizado entre 1958 y 1970 en el Hospital Billings de la Universidad de Chicago, sobre la supervivencia de pacientes sometidas a cirugía por cáncer de mama. El dataset consta de 306 instancias y 4 atributos, incluyendo el atributo de clase, que indica el estado de supervivencia. Los atributos son: la edad de la paciente en el momento de la operación, el año de la operación (relativo al 1900), el número de ganglios axilares positivos detectados y el estado de supervivencia, donde " positive" indica que el paciente sobrevivió 5 años o más, y " negative" que falleció antes de ese plazo. Según la descripción del conjunto de datos, no hay valores faltantes.
+
+## Descripción de la tarea.
+La tarea consisten en intentar clasificar a qué grupo pertenece un individuo dada las variables de entrada.
+
+## Visualización de los datos.
+
+Para asegurarnos que disponemos de un conjunto de datos acorde con la descripción obtenida en la página oficial, realizaremos la lectura y un análisis exploratorio sobre el mismo. Para ello, nos aseguramos que estamos en el directorio correcto con el uso de `getwd` para poder así utilizar una función auxiliar para la lectura de archivos `.dat` denominada `read_dat_file` que hace uso de expresiones regulares junto a `readLines` para obtener el "data.frame".
+
+```{r set-directory}
+# Nos aseguramos que la dirección es correcta.
+getwd()
+# En caso de no estar bien ubicados, setear el directorio.
+# setwd("")
+```
+
+```{r auxiliar-read-functions}
+# startregion input
+read_dat_file <- function(x) { 
+  #' Automatically read dat files.
+  #' 
+  #' @description  This functions attempts to automatically read a .dat file and retrieve
+  #' the columns names using regex against the keywords that are commonly defined 
+  #' inside the files such as: attribute
+  #' 
+  #' @param x file from which we will read the lines.
+  #' @usage read_dat_file(x)
+  #' @return The result of read.table given the data and col.names (data.frame).
+  
+  # Read all lines from the .dat file
+  lines <- readLines(x)
+  # Extract column names from the lines starting with '@attribute'
+  attr_lines <- grep("@attribute", lines)
+  column_names <- gsub("@attribute\\s+(\\w+).*", "\\1", lines[attr_lines])
+  # Find where the data starts
+  data_start <- grep("@data", lines) + 1
+  # Read the data using extracted column names
+  read.table(
+    text = lines[data_start:length(lines)],
+    header = FALSE,
+    sep = ",",
+    col.names = column_names
+  )
+}
+
+set_predictors_name <- function(x) {
+  #' Rename the columns as X[0-9]+
+  #'
+  #' @description By renaming the columnas as X[0-9]+ we will have easier access
+  #' to creating the linear models using the R formulas.
+  #' 
+  #' @param x Data.frame we wish to rename
+  #' @usage df <- set_predictors_name(x)
+  #' @return A new data.frame with the new columns names.
+  n <- length(names(x)) - 1 
+  names(x)[1:n] <- paste ("X", 1:n, sep="") 
+  names(x)[n+1] <- "Y"  
+  x
+}
+
+Haberman <- read_dat_file('haberman/haberman.dat')
+Haberman %>% str
+```
+```{r haberman-summary-classes}
+Haberman %>% group_by(Survival) %>% summarise(total=n(), .groups='drop')
+``` 
+```{r haberman-summary}
+Haberman %>% summary
+```
+Observamos que nuestro dataset es acorde a la descripción anterior. Disponemos de una variable categórica a la cual debemos realizar una transformación, esta sería la variable a predecir "Survival". Todo lo demás son variables numéricas. Podemos comprobar el número de valores faltantes. 
+```{r check-missing-values}
+Haberman %>% filter(if_any(everything(), is.na))
+```
+Vemos que no tenemos ningún dato faltante, no necesitamos plantear imputar or eliminar ninguna fila. Aplicaremos una transformación a la columna "Survival" para codificar las 2 posibles clases con los valores 0 para "negative" y 1 para "positive".
+```{r survival-one-hot-encode}
+haberman <- Haberman %>% mutate(Survival=as.factor(ifelse(Survival==" negative", 0, 1)))
+head(haberman)
+```
+
+```{r haberman-distributions}
+for (x in 1:(ncol(haberman)-1)){
+    var.name <- names(haberman)[x]
+    filename <- sprintf("docs/imgs/cl/Distrib%s.png", var.name)
+    plot <- ggplot(data = haberman) + 
+      geom_histogram(aes_string(x = var.name, fill = "Survival"), bins=30) +
+      theme_minimal() + 
+      labs(
+        title = paste("Distribuciones de valores", var.name), 
+        y = "Frecuencia", 
+        x = "Valor normalizado",
+        fill = "Sobrevive"
+      )
+    print(plot)
+    # ggsave(filename, plot)
+}
+```
+```{r haberman-plot-distributions}
+haberman.scaled <- haberman %>% 
+  mutate(across(!Survival, scale))
+
+haberman.pivoted <- haberman.scaled %>% 
+  pivot_longer(cols = -Survival)
+
+ggplot(data = haberman.pivoted) + 
+  geom_histogram(aes(x = value, fill = Survival), bins=30) +
+  facet_wrap(~name) + 
+  theme_minimal() + 
+  labs(
+    title = "Distribuciones de valores de las columnas", 
+    y = "Frecuencia", 
+    x = "Valor normalizado",
+    fill = "Sobrevive"
+)
+``` 
+Observamos las distribuciones de los valores para las dos posibles clases. A cierto modo, se puede observar que las distirbuciones parecen ser similares con excepción de la columna "Positive" que aparenta tener una mayor kurtosis en sus valores cercanos a 0. 
+Para asegurarnos podemos visualizar los diagramas de caja.
+
+```{r boxplot-individual} 
+plot <- ggplot(data = haberman) + 
+  geom_boxplot(aes(x = Age, fill = Survival)) + 
+  facet_wrap(~Survival) +
+  coord_flip() +
+  theme_minimal() + 
+  labs(title = "Diferencia entre clases para columna Edad")
+print(plot)
+# ggsave("docs/imgs/cl/BoxplotEdad.png", plot)
+
+plot <- ggplot(data = haberman) + 
+  geom_boxplot(aes(x = Positive, fill = Survival)) + 
+  facet_wrap(~Survival) +
+  coord_flip() +
+  theme_minimal() + 
+  labs(title = "Diferencia entre clases para columna Positiva")
+print(plot)
+# ggsave("docs/imgs/cl/BoxplotPositive.png", plot)
+
+plot <- ggplot(data = haberman) + 
+  geom_boxplot(aes(x = Year, fill = Survival)) + 
+  facet_wrap(~Survival) +
+  coord_flip() +
+  theme_minimal() + 
+  labs(title = "Diferencia entre clases para la Fecha")
+print(plot)
+# ggsave("docs/imgs/cl/BoxplotYear.png", plot)
+``` 
+Se comprueba visualmente que las distribuciones parecen similares con excepción de "Positive". En el caso de la columna "Positive", se observa una media y varianza distinta entre clases. Donde parece prevalece el valor cercano a 0. Podemos comprobar dicha hipótesis con tests estadísticos para tener mayor robustez. También podemos mirar los diagramas en conjunto para ver las diferencias entre las distribuciones de los datos.
+
+```{r boxplot-all-columns}
+ggplot(data = haberman.pivoted) + 
+  geom_boxplot(aes(x = name, y = value, fill = Survival)) + 
+  theme_minimal() + 
+  labs(x = "Columnas", y = "Dispersión de valores")
+```
+Para comprobar la normalidad de las distribuciones y si las varianzas son distintas entre las clases podemos utilizar el test de shapiro y el test de levene. El test de shapiro nos indica si los datos pertenecen a una normal y el de levene si la varianza entre las distintas clases son similares.
+```{r levene}
+test_homoc_levene = rstatix::levene_test(Positive ~ Survival, data = haberman)
+test_homoc_levene
+```
+Vemos que el test de levene rechaza por lo cual afirmamos nuestra teoría que la varianza entre las clases para la columna "Positive" no es similar. Una tiene mayor varianza que la otra. Podemos comprobar la normalidad de dicha columna.
+```{r shapiro}
+test_normalidad_shapiro = shapiro.test(haberman$Positive)
+test_normalidad_shapiro
+```
+El test de shapiro también rechaza, afirmando que tampoco pertenecen los datos a una normal. Podemos comprobar lo mismo para las diferentes columnas.
+```{r levene-shapiro-all-columns}
+leve_shap_test <- function(x){
+  columna <- colnames(haberman)[x] 
+  leve <- rstatix::levene_test(formula = as.formula(paste(columna, "~ Survival")), data = haberman)$p
+  data.neg <-  haberman %>% filter(Survival == 0)
+  data.pos <-  haberman %>% filter(Survival == 1)
+  shap.neg <- shapiro.test(data.neg[, x])$p
+  shap.pos <- shapiro.test(data.pos[, x])$p
+  list(
+    columna=columna,
+    leve=leve, 
+    shap.neg=shap.neg,
+    shap.pos=shap.pos
+    )
+} 
+sapply(1:3, leve_shap_test)
+```
+Con esto observamos que ninguna columna sigue una distribución normal. La columna "Age" aunque parecía que sí, tampoco. No obstante, sí que vemos que la varianza entre las columnas "Age" y "Year" se asemejan entre las distintas clases.
+
+## Búsqueda de valores anómalos.
+Para comprobar la posible existencia de valores anómalos utilizaremos una función `test_Grubbs` que nos devolverá los posibles valores anómalos (aquellos más alejados de la media) y el resultado de haber aplicado el test de `Grubbs` que nos indica si dichos valores pertenecen o no a la distribución normal subyaciente. Como la hipótesis de partida es que los datos pertenecen a una normal, comprobaremos dicha hipótesis con el test de shapiro. Con esto, tendremos posibles valores anómalos e información sobre la robustez de dicho análisis junto a información sobre la normalidad de los datos.
+
+```{r test-grubbs}
+test_Grubbs <- function(indice.columna, data.frame, alpha = 0.05){
+  columna <- data.frame[, indice.columna]
+  test.Grubbs = grubbs.test(columna, two.sided = TRUE)
+  p.value <- test.Grubbs$p.value
+  es.outlier <- p.value < 0.05
+  # H0 :El valor más alejado de la media proviene de la misma distribución normal que el resto de datos
+  # El p-value es > 0.05, por lo que el test no puede rechazar
+  ## Obtenemos el nombre de ese dato
+  es.posible.outlier = outlier(columna, logical = TRUE)
+  clave.mas.alejado.media = which(es.posible.outlier == TRUE)
+  valor.mas.alejado.media = columna[clave.mas.alejado.media]
+  
+  ## Comprobación del test de normalidad
+  sin.outlier = data.frame[-clave.mas.alejado.media,]
+  columna.sin.outlier = sin.outlier[, indice.columna]
+  shaptest <- shapiro.test(columna.sin.outlier)  
+  p.value.test.normalidad <- shaptest$p.value
+  es.distrib.norm <- p.value.test.normalidad > alpha
+  list(
+    columna=colnames(data.frame)[indice.columna],
+    clave.mas.alejado.media=clave.mas.alejado.media,
+    valor.mas.alejado.media=valor.mas.alejado.media,
+    es.outlier=es.outlier,
+    p.value=p.value,
+    p.value.test.normalidad=p.value.test.normalidad,
+    es.distrib.norm=es.distrib.norm
+  )
+}
+haberman.outliers <- sapply(1:(ncol(haberman)-1), test_Grubbs, haberman)
+haberman.outliers
+```
+
+Según el test de Grubbs, observamos que podríamos tener posibles valores anómalos en la columna "Year" con valores igual al año 1969, probablemente debido al reducido número de ejemplos para ese año. En las demás columnas, tenemos un valor muy alejado de la media en "Edad" con 83 años. Y un valor muy alejado de la media en "Positivos" con 52 valores. Podemos analizar estos datos para cada clase que vayamos a predecir. 
+
+```{r per-class-grubbs-negative}
+haberman.no.outliers <- sapply(1:(ncol(haberman)-1), test_Grubbs, haberman %>% filter(Survival == 0))
+haberman.no.outliers
+```
+Podemos ver que se considera al menos 1 valor anómalo en cada columna para la clase negativa. No obstante, ninguna de las distribuciones subyacientes parecen pertenecer a una normal, por lo cuál no tenemos robustez estadística para la eliminación de dichos valores. En la columna año volvemos a tener considerado anómalos valores del año 1969. Lo que nos indica haber tenido
+```{r per-class-grubbs-positive}
+haberman.yes.outliers <- sapply(1:(ncol(haberman)-1), test_Grubbs, haberman %>% filter(Survival == 1))
+haberman.yes.outliers
+```
+Observamos que cuando la clase es positiva tenemos valores considerados anómalos por Grubbs en las columnas "Year" y "Positive". Además, vemos que la columna "Edad" sigue una distribución normal. Si observamos los pares de valores para cada clase y luego dibujamos un plot bidimensional para las columnas "Positive" y "Age" podemos colorear los valores considerados anómalos.
+
+```{r ggpairs}
+plot <- ggpairs(haberman, columns = 1:3, aes(color=Survival, alpha=0.5))
+# ggsave("docs/imgs/cl/Pairs.png", plot)
+```
+```{r plot-bidimensional}
+# png(file="docs/imgs/cl/GrubbsAnomalies.png", width=7,height=7, units='in', res=300)
+plot_2_colores = function (datos, 
+                           claves.a.mostrar, 
+                           titulo = "",
+                           colores = c("black", "red")){
+  
+  num.datos = nrow(as.matrix(datos))
+  seleccionados =  rep(FALSE, num.datos)
+  seleccionados[claves.a.mostrar] = TRUE
+  colores.a.mostrar = rep(colores[1], num.datos)
+  colores.a.mostrar [seleccionados] = colores[2]
+  
+  plot(datos, col=colores.a.mostrar, main = titulo)
+}
+claves.outliers.IQR <-c(
+    which(haberman$Age %in% c(77, 83)), 
+    which(haberman$Positive %in% c(46, 52))
+)
+plot_2_colores(
+  haberman[, -4],
+  claves.outliers.IQR,
+)
+# dev.off()
+```
+Dichos valores pintados en rojo, realmente aparentan ser valores anómalos dentro de nuestros datos mirando como se comporta la mayoría de ellos. Tenemos una zona de alta densidad de "Age - Positive" en la zona baja (pocos positivos) y entre [30, 75] años. Por lo que los estos valores lo podríamos considerar anómalos y eliminarlos (sobre todo si consideramos su etiqueta viendo el gráfico de color anterior).
+Aunque sabemos que no disponemos de normales multivariantes, el análisis de anomalías en multivariables nos puede ayudar a descubrir posibles valores interesantes de estudiar. Podemos mirar los valores anómalos multivariantes y verificar si existe alguno que surge de la interacción entre las variables. Para ello, haremos uso de métodos basados en la distancia, por ejemplo malahanobis, y en densidades. 
+```{r cqplot}
+# png(file="docs/imgs/cl/QQPlot.png", width=7,height=7, units='in', res=300)
+heplots::cqplot(haberman.scaled[, -4], method = "classical")
+# dev.off()
+```
+Podemos observar que tenemos una cola a la derecha y no tenemos robustez estadística en nuestro análisis de anomalias multivariantes pero seguramente encontremos resultados interesantes.
+```{r malahanobis}
+dist.mah.clas = heplots::Mahalanobis(haberman.scaled[, -4], method = "classical")
+outliers.mah <- quantile(dist.mah.clas, 0.975)
+es.outlier.mah <- which(dist.mah.clas > outliers.mah)
+haberman[es.outlier.mah,-4]
+```
+```{r outliers-malahanobis}
+png(file="docs/imgs/cl/Malahanobis.png", width=7,height=7, units='in', res=300)
+plot_2_colores(
+  haberman %>% dplyr::select(!Survival),
+  es.outlier.mah
+)
+dev.off()
+```
+En este caso, nos ha salido algunos valores anómalos distinto de los obtenidos en el análisis univariacional. Podemos verificar si obtenemos valores similares con un análisis basado en densidades. 
+```{r LOF}
+num.vecinos.lof = 5
+lof.scores = DDoutlier::LOF(dataset = haberman.scaled[, -4], k = num.vecinos.lof)
+lof.scores.sorted = sort(lof.scores, decreasing = TRUE)
+plot(1:length(lof.scores), lof.scores.sorted)
+```
+```{r outliers-plot}
+num.outliers <- 10
+claves.outliers.lof <- which(lof.scores >= lof.scores.sorted[num.outliers])
+haberman[claves.outliers.lof, -4]
+```
+```{r outliers-lof}
+plot_2_colores(
+  haberman %>% dplyr::select(!Survival),
+  claves.outliers.lof
+)
+```
+Los datos obtenidos son difíciles de interpretar. Algunos valores considerados anómalos a simple vista no parecen serlos. Sería necesario consultar con un experto para obtener una opinión adicional. Podemos centrarnos en los valores extremos obtenidos con malahanobis que si parecen ser mayoritariamente aquellos alejados significativamente de la zona de mayor densidad de nuestros puntos.
+Además, podríamos visualizar aquellos valores que son multivarientes puros según malahanobis. 
+
+```{r multivariantes-puros}
+claves.outliers.lof.no.IQR <- setdiff(es.outlier.mah, claves.outliers.IQR)
+claves.outliers.lof.no.IQR
+haberman[claves.outliers.lof.no.IQR, -4]
+```
+Eliminamos todos los valores anómalos univariantes y multivariantes puros (malahanobis).
+```{r eliminar-valores-anomalos}
+final_haberman.scaled <- haberman.scaled[-unique(c(es.outlier.mah, claves.outliers.IQR)),]
+claves.outliers <- unique(c(es.outlier.mah, claves.outliers.IQR))
+final_haberman <- haberman[-claves.outliers,]
+outliers_values <- haberman[claves.outliers, ]
+ggpairs(final_haberman, columns = 1:3, aes(color=Survival, alpha=0.5))
+```
+Miramos la correlación entre las variables por si hubiera posible iteracciones entre ellas.
+```{r corr-plot}
+library(mvoutlier) # corr.plot 
+# png(file="docs/imgs/cl/Correlacion.png", width=7,height=7, units='in', res=300)
+fcor_matrix <- cor(final_haberman.scaled %>% dplyr::select(!Survival))
+corrplot(fcor_matrix)
+# dev.off()
+```
+# K-NN
+```{r knn-10-fold-variying-k}
+set.seed(140421)
+knn.models <- list()
+k_candidates <- seq(1, 50, 1)
+folds <- seq(1, 10, 1)
+train.data <- lapply(folds, function(x) {
+  # Leemos el fichero
+  filename <- paste('haberman/haberman-10-',x,'tra.dat', sep="")
+  dat <- read_dat_file(filename)
+  # Creamos el factor 0 y 1 de etiqueta
+  dat <- dat %>% mutate(Survival=as.factor(ifelse(Survival==" negative", 0, 1)))
+  # Eliminamos del conjunto de entrenamiento los valores anómalos hallado en EDA.
+  dat <- anti_join(dat, outliers_values, by=colnames(dat))
+  }
+)
+test <- lapply(folds, function(x) {
+  # Leemos el fichero de test
+  filename <- paste('haberman/haberman-10-',x,'tst.dat', sep="")
+  dat <- read_dat_file(filename)
+  # Creamos el factor 0 y 1 para la etiqueta
+  dat <- dat %>% mutate(Survival=as.factor(ifelse(Survival==" negative", 0, 1)))
+  }
+)
+suppressWarnings({
+  knn.models <- lapply(
+    # Por cada pliegue de validación cruzada
+    folds,
+    function(f) {
+      knn.train <- lapply(
+        # Por cada candidato de K
+        k_candidates,
+        function(k){
+          # Particiones los datos de entrenamiento
+          trainIndex <- createDataPartition(train.data[[f]]$Survival, p = .80, list = FALSE)
+          # Cargamos el conjunto de entrenamiento
+          train <- train.data[[f]][trainIndex, ] 
+          # Escalamos los resultados a la normal con Z-score 
+          mus <- sapply(dplyr::select(train, -Survival), mean)
+          devs <- sapply(dplyr::select(train, -Survival), sd)
+          train[, 1:(ncol(train)-1)] <- lapply(1:(ncol(train)-1), function(i) {(train[,i] - mus[i] ) / devs[i]})
+          # Escalamos validación con la media y desviación del conjunto de entrenamiento
+          val <- train.data[[f]][-trainIndex, ]
+          val[, 1:(ncol(val)-1)] <- lapply(1:(ncol(val)-1), function(i) {(val[,i] - mus[i] ) / devs[i]})
+          
+          knn.train <- knn(
+            dplyr::select(train, -Survival),
+            dplyr::select(val, -Survival),
+            train$Survival,
+            k = k,
+          )
+          # Calculamos los aciertos
+          knn.table <- table(
+            knn.train,
+            val$Survival
+          )
+          # Contamos el accuracy 
+          knn.acc <- sum(diag(knn.table)) / nrow(val)
+          cm <- confusionMatrix(knn.train, val$Survival)
+          list(
+            train=knn.train,
+            table=knn.table,
+            acc=knn.acc,
+            cm=cm
+          )
+        }
+      )
+    }
+  )
+})
+# Vemos  los resultados de accuracy para el primer fold y los distintos valors de K
+sapply(k_candidates, function(k) {knn.models[[1]][[k]]$acc})
+```
+
+```{r mean-folds-results}
+# Vemos el resultados promedio de los K candidatos para los F pliegues.
+knn.means <- sapply(
+  k_candidates,
+  function(k){
+    mean(
+      sapply(
+        folds,
+        function(f){ 
+          knn.models[[f]][[k]]$acc
+        }
+      )
+    )
+  }
+)
+# Resultados promedios de los valores de K para todos los pliegues.
+knn.means
+``` 
+```{r elbow-plot}
+plot_data <- data.frame(k=k_candidates, means=knn.means)
+plot <- ggplot(plot_data, aes(x = k, y = means)) + geom_line() + geom_point() + theme_minimal()
+print(plot)
+# ggsave("docs/imgs/cl/Elbow.png", plot)
+```
+```{r knn-best-model}
+value <- max(knn.means)
+# knn.train.best_results <- list(k=which(knn.means >= value), acc <- value)
+knn.train.best_results <- list(k = 16)
+```
+```{r knn-test-results}
+set.seed(140421)
+knn.test <- lapply(
+  folds, 
+  function(f){ 
+    # Leemos los datos de entrenamiento
+    # Particiones los datos de entrenamiento
+    trainIndex <- createDataPartition(train.data[[f]]$Survival, p = .80, list = FALSE)
+    # Cargamos el conjunto de entrenamiento
+    train <- train.data[[f]][trainIndex, ] 
+    # Escalamos los resultados a la normal con Z-score 
+    mus <- sapply(dplyr::select(train, -Survival), mean)
+    devs <- sapply(dplyr::select(train, -Survival), sd)
+    train[, 1:(ncol(train)-1)] <- lapply(1:(ncol(train)-1), function(i) {(train[,i] - mus[i] ) / devs[i]})
+    test <- test[[f]]
+    # Normalizamos el conjunto de test usando la media y desviación de entrenamiento
+    test[, 1:(ncol(test)-1)] <- lapply(1:(ncol(test)-1), function(i) {(test[,i] - mus[i] ) / devs[i]})
+    predict <- knn(
+      dplyr::select(train, -Survival),
+      dplyr::select(test, -Survival),
+      train$Survival,
+      k = knn.train.best_results$k[[1]],
+    )
+    predict.table <- table(
+      predict,
+      test$Survival
+    )
+    acc <- sum(diag(predict.table)) / nrow(test)
+    cm <- confusionMatrix(predict, test$Survival)
+    list(
+      acc=acc, 
+      cm=cm
+    )
+  }
+)
+```
+
+```{r knn-mean-tests-results}
+knn.test.acc <- mean(
+  sapply(
+    folds,
+    function(f){ 
+      knn.test[[f]]$acc
+    }
+  )
+)
+knn.test.acc
+```
+```{r train-lda-variances}
+haberman %>%
+  group_by(Survival) %>%
+  group_map(~var(.x))
+```
+```{r train-barletts-test}
+bartlett.test(
+  Age ~ Survival,
+  haberman
+)
+bartlett.test(
+  Year ~ Survival,
+  haberman
+)
+bartlett.test(
+  Positive ~ Survival,
+  haberman
+)
+``` 
+Se confirma lo visto con Levene, la varianza entre las clases para Positive no es similar.
+```{r train-lda}
+# Do I need to scale the parameters for LDA? Not exactly.
+# https://stats.stackexchange.com/questions/109071/standardizing-features-when-using-lda-as-a-pre-processing-step
+set.seed(140421)
+lda.train <- lapply(
+  folds, 
+  function(f){
+      # Particiones los datos de entrenamiento
+      trainIndex <- createDataPartition(train.data[[f]]$Survival, p = .80, list = FALSE)
+      # Cargamos el conjunto de entrenamiento
+      train <- train.data[[f]][trainIndex, ] 
+      val <- train.data[[f]][-trainIndex, ]
+      # Entrenamos el modelo LDA
+      model.lda <- lda(Survival ~ Age + Year + Positive, data = train)
+      # Evaluamos
+      lda.pred.val <- predict(model.lda, dplyr::select(val, -Survival))
+      cm <- table(lda.pred.val$class, val$Survival)
+      acc <- sum(diag(cm)) / nrow(val)
+      list(
+        model=model.lda,
+        cm=cm,
+        acc=acc
+      )
+  }
+)
+``` 
+```{r train-lda-results}
+lda.train.acc <- mean(sapply(lda.train, function(x){x$acc}))
+lda.train.acc
+``` 
+```{r test-lda}
+set.seed(140421)
+lda.test <- lapply(
+  folds, 
+  function(f){
+    # Particiones los datos de entrenamiento
+    train <- train.data[[f]]
+    # Cargamos el conjunto de entrenamiento
+    tst <- test[[f]]
+    # Entrenamos el modelo LDA
+    model.lda <- lda(Survival ~ Age + Year + Positive, data = train)
+    # Evaluamos
+    lda.pred.tst <- predict(model.lda, dplyr::select(tst, -Survival))
+    cm <- table(lda.pred.tst$class, tst$Survival)
+    acc <- sum(diag(cm)) / nrow(tst)
+    list(
+      model=model.lda,
+      cm=cm,
+      acc=acc
+    )
+  }
+)
+```
+```{r test-lda-results}
+lda.test.acc <- mean(sapply(lda.test, function(x){x$acc}))
+lda.test.acc
+```
+```{r train-qda}
+set.seed(140421)
+qda.train <- lapply(
+  folds, 
+  function(f){
+    # Particiones los datos de entrenamiento
+    trainIndex <- createDataPartition(train.data[[f]]$Survival, p = .80, list = FALSE)
+    # Cargamos el conjunto de entrenamiento
+    train <- train.data[[f]][trainIndex, ] 
+    val <- train.data[[f]][-trainIndex, ]
+    # Entrenamos el modelo qda
+    model.qda <- qda(Survival ~ Age + Year + Positive, data = train)
+    # Evaluamos
+    qda.pred.val <- predict(model.qda, dplyr::select(val, -Survival))
+    cm <- table(qda.pred.val$class, val$Survival)
+    acc <- sum(diag(cm)) / nrow(val)
+    list(
+      model=model.qda,
+      cm=cm,
+      acc=acc
+    )
+  }
+)
+```
+```{r train-qda-results}
+qda.train.acc <- mean(sapply(qda.train, function(x){x$acc}))
+qda.train.acc
+```
+```{r test-qda}
+set.seed(1404121)
+qda.test <- lapply(
+  folds, 
+  function(f){
+    # Particiones los datos de entrenamiento
+    train <- train.data[[f]]
+    # Cargamos el conjunto de entrenamiento
+    tst <- test[[f]]
+    # Entrenamos el mmodelo QDA
+    model.lda <- qda(Survival ~ Age + Year + Positive, data = train)
+    # Evaluamos
+    lda.pred.tst <- predict(model.lda, dplyr::select(tst, -Survival))
+    cm <- table(lda.pred.tst$class, tst$Survival)
+    acc <- sum(diag(cm)) / nrow(tst)
+    list(
+      model=model.lda,
+      cm=cm,
+      acc=acc
+    )
+  }
+)
+```
+```{r test-qda-results}
+qda.test.acc <- mean(sapply(qda.test, function(x){x$acc}))
+qda.test.acc
+```
+
+```{r read-csv-and-overwrite}
+#leemos la tabla con los errores medios de test
+resultados <- read.csv("clasif_test_alumos.csv")
+tablatst <- cbind(resultados[,2:dim(resultados)[2]])
+colnames(tablatst) <- names(resultados)[2:dim(resultados)[2]]
+rownames(tablatst) <- resultados[,1]
+ind.alg <- which(rownames(tablatst) == "concrete")
+tablatst[ind.alg, "out_test_lda"] <- lda.test.acc 
+tablatst[ind.alg, "out_test_qda"] <- qda.test.acc
+tablatst[ind.alg, "out_test_knn"] <- knn.test.acc
+tablatst
+
+#leemos la tabla con los errores medios de entrenamiento
+resultados <- read.csv("clasif_train_alumnos.csv")
+tablatra <- cbind(resultados[,2:dim(resultados)[2]])
+colnames(tablatra) <- names(resultados)[2:dim(resultados)[2]]
+rownames(tablatra) <- resultados[,1]
+tablatra[ind.alg, "out_train_lda"] <- lda.train.acc
+tablatra[ind.alg, "out_train_qda"] <- qda.train.acc
+tablatra[ind.alg, "out_train_knn"] <- knn.means[knn.train.best_results$k]
+tablatra
+```
+
+```{r test-estadistico}
+difs <- (tablatst[,1] - tablatst[,2]) / tablatst[,1]
+wilc_1_2 <- cbind(ifelse (difs<0, abs(difs)+0.1, 0+0.1), ifelse (difs>0, 	abs(difs)+0.1, 0+0.1))
+colnames(wilc_1_2) <- c(colnames(tablatst)[1], colnames(tablatst)[2])
+head(wilc_1_2)
+
+#Aplicaci�n del test de WILCOXON
+LMvsKNNtst <- wilcox.test(wilc_1_2[,1], wilc_1_2[,2], alternative = "two.sided", paired=TRUE)
+Rmas <- LMvsKNNtst$statistic
+pvalue <- LMvsKNNtst$p.value
+LMvsKNNtst <- wilcox.test(wilc_1_2[,2], wilc_1_2[,1], alternative = "two.sided", paired=TRUE)
+Rmenos <- LMvsKNNtst$statistic
+Rmas
+Rmenos
+pvalue
+
+#Aplicaci�n del test de Friedman
+test_friedman <- friedman.test(as.matrix(tablatst))
+test_friedman
+
+#Aplicaci�n del test post-hoc de HOLM
+tam <- dim(tablatst)
+groups <- rep(1:tam[2], each=tam[1])
+pairwise.wilcox.test(as.matrix(tablatst), groups, p.adjust = "holm", paired = TRUE)
+```

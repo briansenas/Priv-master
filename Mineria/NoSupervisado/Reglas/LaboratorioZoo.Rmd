@@ -1,0 +1,279 @@
+---
+title: "LaboratorioZoo"
+author: "Brian Sena Simons"
+date: "2024-10-29"
+output: html_document
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r config, echo = FALSE}
+library(mlbench) # require(mlbench)
+library(dplyr)
+library(tidyverse)
+library(arules)
+```
+
+# Cosas interesantes encontradas:
+
+Con mamíferos:
+
+[21]	{toothed=FALSE, backbone=TRUE, catsize=FALSE}	=\>	{type=bird}	\
+0.1386139	1.0000000	0.1386139	5.050000	14
+
+[30] {toothed=FALSE, backbone=TRUE, catsize=FALSE} =\> {feathers=TRUE}\
+0.1386139 1.0000000 0.1386139 5.050000 14
+
+Tras eliminar el grupo de mamíferos:
+
+[5] {toothed=FALSE, venomous=FALSE, tail=TRUE} =\> {feathers=TRUE}\
+0.3333333 0.9523810 0.3500000 2.857143 20
+
+[6] {toothed=FALSE, venomous=FALSE, tail=TRUE} =\> {type=bird}\
+0.3333333 0.9523810 0.3500000 2.857143 2
+
+[5] {toothed=TRUE, legs=no_legs} =\> {venomous=FALSE}\
+0.2166667 0.8125000 0.2666667 0.9375000 13
+
+# Introducción
+
+Cargamos y visualizamos los datos.
+
+```{r load-data}
+data(Zoo)
+summary(Zoo)
+```
+
+Vemos que la mayoría de los datos son de tipo lógico y debemos
+convertilos a factores. Además tenemos un valor númerico cardinal "legs"
+al cuál debemos aplicarle una función de corte.
+
+Realizamos las modificaciones necesarias con el conjunto de tidyverse:
+
+```{r logical-as-factors}
+newZoo <- Zoo %>%
+  mutate(across(where(is.logical), as.factor)) %>%
+  mutate(legs = cut(legs, breaks=c(-Inf, 0, Inf), labels=c("no_legs", "legs")))
+summary(newZoo)
+```
+
+Vemos que el conjunto de datos no esta balanceado para los distintos
+tipos de animales:
+
+```{r distribution-of-types}
+plot(newZoo$type)
+```
+
+Vemos que mayoritariamente tenemos reglas para los animales mamíferos.
+Quizás será interesante obtener reglas separadas entre los distintos
+tipos.
+
+# Análisis general:
+
+Ahora tenemos un conjunto de datos que podemos convertir a transaccional
+para realizar nuestro análisis de reglas de asociación.
+
+```{r convert-to-transactions}
+rZoo <- as(newZoo, "transactions")
+summary(rZoo)
+```
+
+Podemos visualizar los itemsets más frecuentes:
+
+```{r itemsets-frecuentes}
+itemFrequencyPlot(rZoo)
+```
+
+Podemos aplicar el algoritmo a-priori para obtener los primeros
+conjuntos de itemsets de nuestro dataset:
+
+```{r apply-a-priori-to-default}
+irZoo <- apriori(rZoo, parameter = list(support = 0.1, target="frequent")) 
+irZoo <- sort(irZoo, by="support")  # Los ordenamos por el valor del soporte 
+summary(irZoo)
+```
+
+Vemos que tenemos una gran cantidad de itemsets, la mayoría de tamaño
+mayor que 5. Vemos un skew en la distribución de reglas, podemos
+visualizarlo con barplot:
+
+```{r visualize-a-priori-default}
+barplot(table(size(irZoo)), xlab="itemset size", ylab="count") 
+```
+
+Para reducir el conjunto de itemsets podemos optar por quedarnos con los
+conjuntos maximales y cerrados:
+
+```{r plot-maximales-cerrados-default}
+imaxrZoo <- irZoo[is.maximal(irZoo)] 
+iclorZoo <- irZoo[is.closed(irZoo)] 
+barplot( c(frequent=length(irZoo), closed=length(iclorZoo),  maximal=length(imaxrZoo)), ylab="count", xlab="itemsets") 
+```
+
+Hemos podido reducir significativamente el número de itemsets obtenidos.
+Podemos obtener el conjunto de reglas con:
+
+```{r get-rules-from-default}
+rules <- apriori(rZoo, parameter = list(support = 0.1, confidence = 0.8, minlen = 2)) 
+```
+
+```{r read-rules-from-default}
+summary(rules)
+rulesSorted <- sort(rules, decreasing=TRUE, by="confidence")
+inspect(head(rulesSorted))
+```
+
+Podemos observar reglas triviales con confianza máxima como el hecho de
+los peces no tienen piernas, son acuáticos, no tienen pelo...; Además,
+tenemos un conjunto significativamente grande reglas donde la
+probabilidad de que haya reglas redundantes es muy alta. Así que podemos
+entonces eliminar dichas reglas y volver a visualizar nuestro conjunto
+de reglas:
+
+```{r remove-redundant-rules-from-default}
+redundant <- is.redundant(x = rulesSorted, measure = "confidence") 
+rulesPruned <- rulesSorted[!redundant]  # remove redundant rules 
+summary(rulesPruned)
+inspect(head(rulesPruned, 20))
+```
+
+```{r visualize-interesting-rules}
+library(arulesViz)
+plot(rulesPruned)
+```
+
+Podemos visualizar algunos conjuntos de reglas que parecen interesantes:
+
+```{r view-possible-interesting-rules}
+viewRules <- subset(
+  rulesPruned, (lift > 1.2 | lift < 1.0) & (support < 0.5 & support > 0.3)
+)
+inspect(head(sort(viewRules, decreasing=TRUE, by = "lift"), 40)) 
+inspect(head(sort(viewRules, decreasing=FALSE, by = "lift"), 40)) 
+```
+
+O incluso podemos visualizar aquellas con bajo suporte y muy alto lift:
+
+```{r view-inflated-lift-rules}
+ExViewRules <- subset(
+  rulesPruned, 
+  (lift > 3 | lift < 1) & (support < 0.3) 
+  # & !(rhs %in% c("type=fish", "fins=TRUE"))
+)
+inspect(head(sort(ExViewRules, decreasing=TRUE, by = "lift"), 40)) 
+inspect(head(sort(ExViewRules, decreasing=FALSE, by = "lift"), 40)) 
+```
+
+Vemos que las reglas para los distintos tipos de animales, aunque muchas
+triviales, aparecen como muy relevantes dado el desequilibrio de clases.
+Así que podemos intentar realizar una análisis eliminando la clase
+mayoritaria de nuestro dataset.
+
+# Análisis sin clases mayoritarias.
+
+```{r no-mammal-class}
+mZoo <- newZoo  %>% 
+  filter(!(type  %in% c("mammal", "bird", "fish"))) %>% 
+  select(-fins, -domestic, -catsize, -milk, -feathers, -hair, -eggs)
+summary(mZoo)
+```
+
+```{r minority-as-transactions}
+rmZoo <- as(mZoo, "transactions")
+summary(rmZoo)
+```
+
+```{r view-new-itemsetfreq-for-minority}
+itemFrequencyPlot(rmZoo)
+```
+
+```{r view-minority-rules}
+mRules <- apriori(rmZoo, parameter = list(support = 0.1, confidence = 0.8, minlen = 2)) 
+mRulesSorted <- sort(mRules, decreasing=TRUE, by="confidence")
+mRedundant <- is.redundant(x = mRulesSorted, measure = "confidence") 
+mRulesPruned <- mRulesSorted[!mRedundant]  # remove redundant rules 
+summary(mRulesPruned)
+```
+
+Ahora vemos que obtenemos un subconjunto de reglas mucho más pequeño que
+el caso anterior. Donde podemos ver nuevas reglas cómo:
+
+```{r inspect-minority-rules-pruned}
+inspect(head(mRulesPruned, 50))
+plot(mRulesPruned, jitter = .4)
+```
+
+```{r filtramos-posibles-reglas-interesantes}
+mViewRules <- subset(
+  mRulesPruned,
+  (lift > 1.2 | lift < 1.0) & (support < 0.5 & support > 0.3)
+)
+inspect(head(sort(mViewRules, decreasing=TRUE, by = "lift"), 40)) 
+inspect(head(sort(mViewRules, decreasing=FALSE, by = "lift"), 40)) 
+```
+
+```{r filtramos-reglas-extremas}
+ExmViewRules <- subset(
+  mRulesPruned,
+  (lift > 2 | lift < 0.5) & (support < 0.4)
+)
+inspect(head(sort(ExmViewRules, decreasing=TRUE, by = "lift"), 40)) 
+inspect(head(sort(ExmViewRules, decreasing=FALSE, by = "lift"), 40)) 
+```
+
+# Análisis sin mamíferos:
+
+```{r no-mammal-class}
+mZoo <- newZoo  %>% 
+  filter(!(type  %in% c("mammal"))) %>% 
+  select(-hair, -eggs, -milk, -domestic)
+summary(mZoo)
+```
+
+```{r no-mammals-as-transactions}
+rmZoo <- as(mZoo, "transactions")
+summary(rmZoo)
+```
+
+```{r view-new-itemsetfreq-for-no-mammals}
+itemFrequencyPlot(rmZoo)
+```
+
+```{r view-no-mammals-rules}
+mRules <- apriori(rmZoo, parameter = list(support = 0.1, confidence = 0.8, minlen = 2)) 
+mRulesSorted <- sort(mRules, decreasing=TRUE, by="confidence")
+mRedundant <- is.redundant(x = mRulesSorted, measure = "confidence") 
+mRulesPruned <- mRulesSorted[!mRedundant]  # remove redundant rules 
+summary(mRulesPruned)
+```
+
+Ahora vemos que obtenemos un subconjunto de reglas mucho más pequeño que
+el caso anterior. Donde podemos ver nuevas reglas cómo:
+
+```{r inspect-no-mammals-rules-pruned}
+inspect(head(mRulesPruned, 50))
+plot(mRulesPruned, jitter = .4)
+```
+
+```{r view-possible-interesting-rules-no-mammals}
+mViewRules <- subset(
+  mRulesPruned,
+  (lift > 1.2 | lift < 1.0) & (support < 0.5 & support > 0.3)
+)
+inspect(head(sort(mViewRules, decreasing=TRUE, by = "lift"), 40)) 
+inspect(head(sort(mViewRules, decreasing=FALSE, by = "lift"), 40)) 
+```
+
+```{r filter-extreme-rules-no-mammal}
+ExmViewRules <- subset(
+  mRulesPruned,
+  (lift > 2 | lift < 1) & (support < 0.4)
+)
+inspect(head(sort(ExmViewRules, decreasing=TRUE, by = "lift"), 50)) 
+inspect(head(sort(ExmViewRules, decreasing=FALSE, by = "lift"), 50)) 
+```

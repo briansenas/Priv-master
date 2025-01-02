@@ -1,0 +1,126 @@
+---
+title: "EDA_DIA_3_CASE"
+author: "Brian Sena Simons"
+date: "2024-10-10"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(tidyverse)
+library(ggplot2)
+library(readxl)
+```
+
+
+# Caso de Estudio 1: 
+## Cargamos los datos
+```{r load-car-example}
+getwd()
+setwd("/home/briansenas/Master/CienciaDatos/EDA/Dia3")
+cars_example <- read_excel("car_example.xls")
+cars_example %>% str
+```
+Para visualizar la distribución de los datos pérdidos haremos las siguientes 
+visualizaciones:
+```{r load-vim, echo=FALSE, warning=FALSE}
+library(VIM)
+library(Amelia)
+library(mice)
+```
+```{r view-missing-values, warning=FALSE}
+aggr_plot <- aggr(
+  cars_example,
+  col=c('blue','red'),
+  numbers=TRUE,
+  sortVars=TRUE,
+  labels=names(cars_example),
+  cex.axis=.7,
+  gap=3,
+  ylab=c("Histogram of missing data","Pattern")
+) 
+missmap(cars_example)
+md.pattern(cars_example)
+```
+
+Podemos pensar que la evolución del tiempo la potencia ha aumentado, o que quizás 
+el fabricante también ha ido mejorando la potencia o que quizás el peso del 
+vehículo disminuyó.... Deberíamos ir listando y analisando las diferencias 
+hipótesis de comportamiento que podamos idear.
+
+## ¿A mayor potencia hay mayor velocidad?
+La pregunta nos incita a ver la correlación entre ambas variables.
+```{r scatter-plot-hp-speed, warning=FALSE}
+cars_example %>%
+  ggplot(aes(x = horsepower_bhp, y = top_speed_kph)) + 
+  geom_point(alpha = .2) +
+  theme_minimal() + 
+  labs(
+    title = "Relación entre la velocidad y los caballos brutos",
+    x = "Fuerza de caballos",
+    y = "Velocidad del coche"
+    )
+```
+
+Aunque aparentemente vemos que pueda haber una correlación positiva entre las 
+variables tenemos que hacer tests para confirmar. No obstante, destaca la línea
+horizontal que vemos alrededor de la mitad del gráfico. 
+```{r max-velocity-ggplot, warning=FALSE}
+cars_example %>%
+  ggplot(aes(x = top_speed_kph)) + 
+  geom_histogram(bins = 20) + 
+  theme_minimal()
+```
+Observando el gráfico vemos una asimetría y una kurtosis. Vemos que hay una gran
+concentración de coches que su velocidad máxima es alrededor de 150 kph. 
+La hipótesis de que se hayan limitado la velocidad de los coches es posible. 
+Observamos la variación de los datos en el tiempo.
+```{r view-time-based-top-speed ,warning=FALSE}
+cars_example %>%
+  ggplot(aes(x = top_speed_kph)) + 
+  geom_histogram(bins = 20) + 
+  theme_minimal() + 
+  facet_wrap(~ decade)
+```
+
+Observamos que a partir de los 2000s se puede visualizar el comportamiento de 
+velocidad máxima cercana a 150. Podemos intentar visualizar si tiene algo que 
+ver con el fabricante.
+
+```{r cars-after-1990}
+cars_example %>% 
+  filter(
+      year >= 1990 &
+      top_speed_mph == 155 
+    ) %>% 
+  group_by(make_nm) %>% 
+  summarize(total = n()) %>%
+  arrange(desc(total))
+```
+También se podría calcular que porcentaje de coches tiene esa limitación frente 
+a la cantidad total de coches para analizar en detalle la influencia de los 
+fabricantes alemanes y su imposición de la limitación frente a los datos generales.
+
+## ¿Ha sido siempre verdad que a mayor potencia mayor velocidad?
+```{r time-based-visualization}
+cars_example %>% 
+  ggplot(aes(x = horsepower_bhp, y = top_speed_mph)) + 
+  geom_point(alpha = .5) + 
+  facet_wrap(~ decade) + 
+  theme_minimal()
+```
+```{r view-extreme-values}
+cars_example %>% 
+  filter(
+      horsepower_bhp >= 750 & 
+        year >= 2010
+    ) %>% 
+  group_by(make_nm) %>%
+  summarise(total = n()) %>% 
+  arrange(desc(total))
+```
+
+
+En 1960 y 1970 habría que buscar qué determina la velocidad ¿Coches grandes?
+En 1980 y 1990 tendríamos que mirar también ¿porqué la relación parecía positiva?

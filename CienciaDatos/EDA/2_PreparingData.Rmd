@@ -1,0 +1,60 @@
+---
+title: "EDA_DIA_2_INCLASS"
+author: "Brian Sena Simons"
+date: "2024-10-10"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(tidyverse)
+library(forcats)
+library(stringr)
+```
+
+
+# Analisando el conjunto de datos de starwars
+```{r counting-eye-color}
+starwars %>%
+  filter(!is.na(skin_color)) %>%
+  count(skin_color, sort = TRUE)
+```
+
+¿Cuándo nos dan pocos ejemplos de un valor nos aporta información? 
+La respuesta es NO. Para ello debemos intentar re-codificar la variable o eliminarla.
+
+```{r recodify-variable}
+starwars %>%
+  mutate(skin_color = fct_lump(skin_color, n = 5)) %>%
+  count(skin_color, sort = TRUE)
+```
+
+Nos quedamos con un conjunto de datos con las 5 mayores categorias y agrupamos.
+Vemos que nos ha agrupado las categorías en "Other". Si queremos podemos cambiar
+el nombre o incluso imponer una proporción de representación:
+
+```{r set-minimum-proportion}
+starwars %>%
+  mutate(skin_color = fct_lump(skin_color, prop = .1, other_level = "extra")) %>%
+  count(skin_color, sort = TRUE)
+```
+
+### Ejercicio
+1. Intenta averiguar si la media del peso (average_mass) difiere según el color de 
+los ojos. Nos interesan los datos solo para los 6 colores de ojos mayoritarias. 
+Elimina los NA's
+```{r ejer1-eliminate-nas-and-group}
+starwars %>%
+  filter(!is.na(mass)) %>%
+  mutate(eye_color = fct_lump(eye_color, n = 6)) %>% 
+  group_by(eye_color) %>%
+  # La profesora suele añadir aún así el na.rm = TRUE
+  summarise(mean = mean(mass)) %>% 
+  ggplot(aes(x = eye_color, y = mean)) +
+  geom_bar(stat="identity") + 
+  theme_classic()
+```
+
+Podríamos utilizar el `fct_reorder()` para re-ordenar los factores según este 
+nuevo dato.

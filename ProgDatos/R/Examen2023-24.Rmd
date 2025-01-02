@@ -1,0 +1,338 @@
+---
+title: "Examen2023-2024"
+author: "Brian Sena Simons"
+date: "2024-11-01"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r config, warning=FALSE, echo=FALSE}
+library(dplyr)
+library(tidyverse)
+library(ggplot2)
+library(stringr)
+```
+
+# Ejercicio 1 (3 ptos.) u
+Dado un data frame df con columnas: receta (tipo character), ingrediente (tipo  character), cantidad (tipo numeric), unidad (tipo character) y es_liquido (tipo logical) se pide  que, usando funciones del paquete tidyverse:
+ A. Calcule la cantidad total de ingredientes líquidos (supondremos que todos usan la misma  unidad) por receta, pero sólo de aquellas recetas que tengan un mínimo de 5 ingredientes  (sean líquidos o no).
+ B. Muestre el nombre de las 5 recetas que utilizan más ingredientes (en número, no en  cantidad) que la media.
+ 
+```{r generate-sample}
+df <- data.frame(
+  receta = c(
+    # Sopa de verduras (5 ingredientes)
+    "Sopa de verduras",
+    # Zanahoria
+    "Sopa de verduras",
+    # Cebolla
+    "Sopa de verduras",
+    # Papa
+    "Sopa de verduras",
+    # Apio
+    "Sopa de verduras",
+    # Agua
+    
+    # Tarta de manzana (6 ingredientes)
+    "Tarta de manzana",
+    # Manzana
+    "Tarta de manzana",
+    # Harina
+    "Tarta de manzana",
+    # Huevos
+    "Tarta de manzana",
+    # Azúcar
+    "Tarta de manzana",
+    # Mantequilla
+    "Tarta de manzana",
+    # Canela
+    
+    # Resto de recetas con menos ingredientes
+    "Ensalada César",
+    # Lechuga
+    "Ensalada César",
+    # Queso
+    
+    "Guiso de carne",
+    # Carne
+    "Guiso de carne",
+    # Cebolla
+    "Guiso de carne",
+    # Agua
+    
+    "Pasta al pesto",
+    # Pasta
+    "Pasta al pesto",
+    # Albahaca
+    "Pasta al pesto",
+    # Aceite
+    
+    "Smoothie de frutas" # Leche
+  ),
+  ingrediente = c(
+    # Sopa de verduras
+    "Zanahoria",
+    "Cebolla",
+    "Papa",
+    "Apio",
+    "Agua",
+    
+    # Tarta de manzana
+    "Manzana",
+    "Harina",
+    "Huevos",
+    "Azúcar",
+    "Mantequilla",
+    "Canela",
+    
+    # Resto de ingredientes
+    "Lechuga",
+    "Queso",
+    
+    "Carne",
+    "Cebolla",
+    "Agua",
+    
+    "Pasta",
+    "Albahaca",
+    "Aceite",
+    
+    "Leche"
+  ),
+  cantidad = c(
+    200,
+    # Zanahoria
+    100,
+    # Cebolla
+    300,
+    # Papa
+    150,
+    # Apio
+    1000,
+    # Agua
+    
+    500,
+    # Manzana
+    200,
+    # Harina
+    2,
+    # Huevos
+    150,
+    # Azúcar
+    100,
+    # Mantequilla
+    5,
+    # Canela
+    
+    150,
+    # Lechuga
+    50,
+    # Queso
+    
+    300,
+    # Carne
+    200,
+    # Cebolla
+    500,
+    # Agua
+    
+    400,
+    # Pasta
+    30,
+    # Albahaca
+    50,
+    # Aceite
+    
+    500  # Leche
+  ),
+  unidad = c(
+    "gramos",
+    # Zanahoria
+    "gramos",
+    # Cebolla
+    "gramos",
+    # Papa
+    "gramos",
+    # Apio
+    "mililitros",
+    # Agua
+    
+    "gramos",
+    # Manzana
+    "gramos",
+    # Harina
+    "unidades",
+    # Huevos
+    "gramos",
+    # Azúcar
+    "gramos",
+    # Mantequilla
+    "gramos",
+    # Canela
+    
+    "gramos",
+    # Lechuga
+    "gramos",
+    # Queso
+    
+    "gramos",
+    # Carne
+    "gramos",
+    # Cebolla
+    "mililitros",
+    # Agua
+    
+    "gramos",
+    # Pasta
+    "gramos",
+    # Albahaca
+    "mililitros",
+    # Aceite
+    
+    "mililitros" # Leche
+  ),
+  es_liquido = c(
+    FALSE,
+    # Zanahoria
+    FALSE,
+    # Cebolla
+    FALSE,
+    # Papa
+    FALSE,
+    # Apio
+    TRUE,
+    # Agua
+    
+    FALSE,
+    # Manzana
+    FALSE,
+    # Harina
+    FALSE,
+    # Huevos
+    FALSE,
+    # Azúcar
+    FALSE,
+    # Mantequilla
+    FALSE,
+    # Canela
+    
+    FALSE,
+    # Lechuga
+    FALSE,
+    # Queso
+    
+    FALSE,
+    # Carne
+    FALSE,
+    # Cebolla
+    TRUE,
+    # Agua
+    
+    FALSE,
+    # Pasta
+    FALSE,
+    # Albahaca
+    TRUE,
+    # Aceite
+    
+    TRUE   # Leche
+  )
+)
+print(df)
+```
+Una vez creado el conjunto de datos sintéticos (no es necesario hacerlo en el examen.)
+```{r ejercicio-a}
+new_df <- 
+  df %>% 
+  group_by(receta) %>% 
+  mutate(total_ingredientes = n()) %>%
+  # Pongo 2 en vez de 5 dado mi conjunto sintético
+  filter(total_ingredientes >= 2 & es_liquido == 1) %>%
+  mutate(total_liquidos = n(), total = total_ingredientes - total_liquidos) %>%
+  select(total_liquidos, total_ingredientes, total)
+print(new_df)
+``` 
+Ahora para el ejercicio b yo lo haría en dos pasos:
+``` {r ejericicio-b}
+# Creamos la columna de total_ingredientes agrupando por receta.
+top_df <- 
+  df %>% 
+  group_by(receta) %>% 
+  # Además creamos el row_number para luego quedarnos con 1 fila por receta.
+  mutate(total_ingredientes = n(), rank = row_number()) 
+# Ahora podemos filtrar 1 fila, calcular la media y luego filtrar.
+top_df <- 
+  top_df %>% 
+  filter(rank <= 1) %>%
+  mutate(media_ingredientes = mean(total_ingredientes)) %>%
+  filter(total_ingredientes >= media_ingredientes) %>% 
+  select(receta)
+top_df
+```
+
+# Ejercicio 2 (2.5 ptos)
+Dado el mismo data frame df de antes, realice un diagrama de barras que muestre  la cantidad de recetas en donde aparece cada ingredientes. Coloree de manera diferente los  ingredientes líquidos de aquellos que no los son y dibuje una línea horizontal que marque el  valor medio de recetas por ingrediente.
+```{r plot-bar-diagram}
+# Hacemos un pipeline similar al anterior
+df_ingrediente <- 
+  df %>% 
+  group_by(ingrediente) %>% 
+  mutate(total_recetas = n(), rank = row_number())
+# Ahora nos quedamos con 1 ingrediente  y calculamos la media
+df_ingrediente <- 
+  df_ingrediente %>% 
+  filter(rank <= 1) %>% 
+  mutate(media_recetas = mean(total_recetas))
+# Ploteamos teniendo el cuenta el color y añadimos el hline
+df_ingrediente %>% 
+  ggplot(aes(x = ingrediente, y = total_recetas, fill = es_liquido)) + 
+  geom_col() +
+  geom_hline(aes(yintercept = media_recetas), color = "red", linewidth = 3) + 
+  theme_minimal()
+```
+# Ejercicio 3 (1.5 ptos)
+Agregue al data frame df de antes una nueva columna llamada factor_cantidad que  sea de tipo factor ordenado con niveles (poco < normal < mucho) donde poco está en el  rango [0,15), normal está en el rango [15,100) y alto está en el rango (100,500]. Esta columna  debe representar los mismos datos que la columna cantidad pero en los tres grupos  disjuntos. Utilice esta nueva columna para escribir en un fcihero “salida.csv” (separado por  comas) aquellas recetas con todos sus ingredientes en cantidad normal.
+ 
+```{r columna-factor}
+ fdf <- 
+  df %>% 
+  mutate(
+    factor_cantidad = cut(
+      cantidad, 
+      breaks = c(0, 15, 100, 500), 
+      right = FALSE,
+      labels = c("poco", "normal", "mucho"), 
+      ordered_result = TRUE,
+    )
+  )
+unique_sets <- 
+  fdf %>%
+  filter(factor_cantidad != "poco") %>% 
+  select(receta) %>% unique()
+
+fdf %>% filter(receta != unique_sets) %>% write_csv("salida.csv")
+# Otra opción "sin utilizar" los factores seŕia
+# as.numeric(factor_cantidad) -> 1, 2, 3
+# La suma de las recetas que sean todas "poco" debería ser 1xN = N 
+# Donde N es el número total de ingredientes.
+# Para filtrar por los otros valores sería algo similar pero sería 2xN ó 3xN
+# Si no coincide es que al menos 1 ingrediente es distinto.
+```
+
+# Ejercicio 4 (3 ptos)
+Escriba una función que dada una matriz m de tipo character (teniendo valor por  omisión una matriz de 2x2 rellena de “hola”) retorne una lista de vectores tipo character que  contenga tantos componentes como filas tenga la matriz. Cada componente debe contener  los elementos en la fila correspondiente en la matriz, pero tantas veces como caracteres ‘a’  contenga. En caso que en una fila no haya ninguna ‘a’ entonces el componente de la lista  debe quedar vacío. Ejemplo:
+ 
+```{r matriz-con-hola}
+library(stringr)
+matrix_to_list <- function(m = matrix("hola", nrow = 2, ncol = 2)) {
+ res <- apply(m, 1, \(x) {
+   list(rep(x, sum(str_count(x, pattern = "a"))))
+   } 
+  )
+ lapply(res, \(x){x[[1]]})
+}
+print(matrix_to_list())
+```

@@ -1,0 +1,20 @@
+---
+title: "SenaSimons_Brian.P1.Rmd"
+author: "Brian Sena Simons"
+date: "2025-01-02"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r config, echo = FALSE}
+library(mlbench) # require(mlbench)
+library(dplyr)
+library(tidyverse)
+library(arules)
+```
+
+# Introducción
+## EDA básico
