@@ -58,7 +58,7 @@ ECI/practicas/data/*
 CienciaDatos/entrega/SenaSimonsBrian_ICD/*
 Mineria/Preprocesamiento/Session*/*
 Mineria/Preprocesamiento/FeatureEngineering/*
-MPG/Genie/*
+MGP/Genie/*
 *.xls
 # R ignores
 # History files

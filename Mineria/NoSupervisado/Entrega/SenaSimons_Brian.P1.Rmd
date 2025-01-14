@@ -3,18 +3,682 @@ title: "SenaSimons_Brian.P1.Rmd"
 author: "Brian Sena Simons"
 date: "2025-01-02"
 output: html_document
+bibliography: citas.bib
+editor_options: 
+  markdown: 
+    wrap: 72
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
-```
-
-```{r config, echo = FALSE}
 library(mlbench) # require(mlbench)
 library(dplyr)
 library(tidyverse)
 library(arules)
+library(arulesViz)
 ```
 
 # Introducción
+
+Se va a realizar un estudio del conjunto de datos de IncomeESL
+[@IncomeESL]. Dicho conjunto de datos proviene de una encuesta realizada
+en el libro "The Elements of Statistical
+Learning"[@StatisticalLearningBook]. En ella, se extrajo información de
+8993 personas y su salario anual. Tenemos 14 atributos demográficos que
+las caracteriza. Tenemos una mezcla de variables categóricas y
+continuas, ambas con varios valores faltantes.
+
+Para empezar, aplicaremos los mismos filtros y transformaciones de las
+variables continuas como lo describen en el libro. Es decir,
+eliminaremos valores faltantes y cortaremos las variables continuas en
+la mediana.
+
 ## EDA básico
+
+```{r view-data}
+data("IncomeESL")
+IncomeESL %>% summary
+```
+
+Podemos observar una cantidad significativa de valores faltantes en
+varias de nuestras variables categóricas, por ejemplo "language in home"
+con 359 valores faltantes (grupo "NA's"). Vemos que nuestras variables
+continuas ya han sido agrupadas en rangos de valores para tener un
+conjunto transacción para aplicar minería de reglas de asociación.
+
+Siguiendo con la descripción y transformaciones del libro eliminamos los
+valores faltantes.
+
+```{r remove-incomplete-cases}
+incomeESL <- IncomeESL[complete.cases(IncomeESL), ]
+sprintf("Número de valores faltantes: %s", nrow(IncomeESL) - nrow(incomeESL))
+incomeESL %>% summary
+```
+
+Se eliminan un total de 2117 transacciones incompletas.
+
+```{r view-types}
+incomeESL %>% str
+```
+
+Podemos observar la distribución de las variables con un histograma
+
+```{r view-distributions}
+for (x in 1:ncol(IncomeESL)){ 
+  var.name <- names(incomeESL)[x]
+  barplot(
+    prop.table(table(incomeESL[, x])),
+    xlab=var.name,
+    ylab="Frecuencia",
+    main=sprintf("Histograma de la variable \"%s\"", var.name)
+  )
+}
+```
+
+En la columna "marital status" observamos un sesgo hacia "married" y
+"single" con una diferencia significativa en frecuencia frente a los
+demás valores. También observamos una tendencia central hacia las edades
+de "25-34" con un pequeña asimetría a la derecha. En "education" también
+observamos una tendencia central de 1 a 3 años de "college", con una
+diferencia notable frente a las demás. También, es evidente la
+diferencia en la ocupación de los individuos, donde observamos un sesgo
+hacia un rol profesional o de administración. Con respecto a "years in
+bay area" vemos que la mayoría de los individuos llevan más de 10 años
+en la zona. Observamos también que hay muchos individuos que dividen su
+responsabilidad financiera sin estar casados ("dual incomes = not
+married"). La mayoría vive en casa con 2 o 3 personas, pero pueden
+llegar incluso a residir con más de 9.
+
+Como vimos que la mayoría eran gente relativamente joven, "25-34" años,
+el número de hijos se distribuye sobre el 0. Terminando, al ser un
+estudio realizado en América, destaca una gran cantidad de etnia blanca
+de habla inglesa en el conjunto de datos. Todas estas observaciones nos
+aporta una nueva perspectiva sobre el análisis, ya que vemos
+distribuciones desequilibradas que pueden afectar a las reglas que
+obtenemos (sobre todo si no usamos diferentes métricas, ya que el
+soporte estará sesgado hacia las características más frecuentes). Para
+reducir muchos de esos sesgos agruparemos varios individuos utilizando
+nuevos cortes sobre la mediana de las columnas "income", "age",
+"education", "years in bay area", "number in household" y "number of
+children".
+
+```{r cut-in-median}
+incomeESL <- IncomeESL[complete.cases(IncomeESL), ]
+incomeESL[["income"]] <- factor((as.numeric(incomeESL[["income"]]) > 6) +1,
+  levels = 1 : 2 , labels = c("$0-$40,000", "$40,000+"))
+	  
+incomeESL[["age"]] <- factor((as.numeric(incomeESL[["age"]]) > 3) +1,
+  levels = 1 : 2 , labels = c("14-34", "35+"))
+
+incomeESL[["education"]] <- factor((as.numeric(incomeESL[["education"]]) > 4) +1,
+  levels = 1 : 2 , labels = c("no college graduate", "college graduate"))
+
+incomeESL[["years in bay area"]] <- factor(
+  (as.numeric(incomeESL[["years in bay area"]]) > 4) +1,
+  levels = 1 : 2 , labels = c("1-9", "10+"))
+
+incomeESL[["number in household"]] <- factor(
+  (as.numeric(incomeESL[["number in household"]]) > 3) +1,
+  levels = 1 : 2 , labels = c("1", "2+"))
+
+incomeESL[["number of children"]] <- factor(
+  (as.numeric(incomeESL[["number of children"]]) > 1) +0,
+  levels = 0 : 1 , labels = c("0", "1+"))
+```
+
+Si volvemos a visualizar los histogramas:
+
+```{r visualize-new-distributions}
+for(x in c(
+       "income",
+       "age",
+       "education",
+       "years in bay area",
+       "number in household",
+       "number of children"
+      )
+    )
+     {
+       barplot(
+         prop.table(table(incomeESL[, x])),
+         xlab=x,
+         ylab="Frecuencia",
+         main=sprintf("Histograma de la variable \"%s\"", x)
+       )
+}
+```
+
+Se observa una mejora de la distribución de los datos en esas variables
+aunque se siguen observando una diferencia notable que tendremos en
+cuenta.
+
+```{r creating-transactions}
+##  creating transactions
+income <- transactions(incomeESL)
+income
+```
+
+Si visualizamos las 50 primeras transacciones, 50 aleatorias y las 50
+últimas:
+
+```{r visualize-rules}
+image(income[1:50])
+image(sample(income, 50))
+image(income[(nrow(income)-50):nrow(income)])
+```
+
+En la Figura anterior podemos observar que ahora tenemos un total de 50
+columnas (formato disperso), en la cuál cada columna representa la
+presencia de un "ítem" o posible valor de nuestro conjunto de datos.
+Observamos que, en este formato, ciertas columnas serán disjuntas y
+otras no. Además, vemos aquellas con poca variabilidad en las columnas
+que parecen una línea vertical.
+
+```{r summary-transactions}
+summary(income)
+```
+
+```{r itemfrecuency-plot}
+itemFrequencyPlot(
+  income,
+  topN = 25,
+  type = "absolute",
+  main = "Item frequency",
+  cex.names = 0.85
+)
+```
+
+Observamos que el itemset más frecuente es acorde con lo que observamos
+en nuestro EDA inicial, "language in home = english". Seguido de otras
+columnas también mencionadas anteriormente como la educación, número de
+conviventes, etnia y años en la bahía. A continuación, realizamos un
+estudio del dataset entero y, posteriormente, de conjuntos más
+específicos que puedan verse ofuscados por la alta frecuencia de algunos
+ítems.
+
+## Dataset Entero
+
+```{r}
+rIncome <- apriori(income, parameter = list(support = 0.1, target="frequent")) 
+rIncome <- sort(rIncome, by="support")  # Los ordenamos por el valor del soporte 
+summary(rIncome)
+```
+
+Observamos una media y mediana que nos indica que la mayoría de las
+reglas contiene 4 itemsets. Que más del 75% de los itemsets son de
+tamaño inferior o igual a 5. Aunque poseemos una regla con 8 itemsets.
+
+```{r bar-plot-rules}
+barplot(table(size(rIncome)), xlab="itemset size", ylab="count") 
+```
+
+Al ser una gran cantidad de reglas, nos podemos fijar en los
+itemsets-cerrados o los itemsets-maximales, que poseen propiedades
+positivas como, para el primero, ser el itemset frecuente para el cual
+ninguno de sus superconjuntos inmediatos tienen un soporte igual al de
+ellos o, para el segundo, ser el itemset frecuente para el cual ninguno
+de sus superconjuntos inmediatos son frecuentes.
+
+```{r maximal-itemsets}
+rIncome.max <- rIncome[is.maximal(rIncome)] 
+rIncome.closed <- rIncome[is.closed(rIncome)] 
+barplot(c(frequent=length(rIncome), closed=length(rIncome.closed),  maximal=length(rIncome.max)), ylab="count", xlab="itemsets") 
+```
+
+```{r view-top-rules}
+inspect(head(rIncome))
+inspect(head(rIncome.closed))
+inspect(head(rIncome.max))
+```
+
+Observamos una gran diferencia entre los itemsets-frecuentes, cerrados y
+maximales. Las reglas con mayor soporte para los dos primeros coinciden,
+mientras que para el conjunto maximal tenemos reglas de longitud
+superior a 1, con soporte mucho más pequeños.
+
+```{r apriori}
+income.rules <- apriori(income, parameter = list(support = 0.1, confidence = 0.8, minlen = 2)) 
+income.rules.sorted <- sort(income.rules, decreasing=TRUE, by="confidence")
+income.rules.redudant <- is.redundant(x = income.rules.sorted, measure = "confidence")
+income.rules.pruned <- income.rules.sorted[!income.rules.redudant]
+inspect(head(income.rules.pruned, 10))
+```
+
+```{r visualize-interesting-rules}
+plot(income.rules.pruned)
+```
+
+Podemos visualizar algunos conjuntos de reglas que parecen interesantes:
+
+```{r view-possible-interesting-rules}
+irules.subset <- subset(
+  income.rules.pruned, (lift > 1.2 | lift < 1.0) & (support < 0.6 & support > 0.15)
+)
+inspect(head(sort(irules.subset, decreasing=TRUE, by = "lift"), 10)) 
+inspect(head(sort(irules.subset, decreasing=FALSE, by = "lift"), 10)) 
+```
+
+Conforme bajamos en la selección ordenada por la métrica LIFT vemos que
+cada vez sale más los sesgos de nuestros datos. Quizás será interesante
+verificar los individuos de "habla no inglesa" y de "etnia no blanca".
+No obstante, la siguiente regla parece una asunción bastante
+interesante:
+
+```         
+[4]  {marital status=married,                                                                                
+      age=35+,                                                                                               
+      years in bay area=10+,                                                                                 
+      type of home=house}           => {householder status=own} 0.1567772  0.9190111 0.1705934 2.445480  1078
+      
+```
+
+Parece ser que se considera que si estás casado, tienes más de 35 años y
+vives en la misma zona más de 10 años tendrás una casa. No obstante, no
+siempre es así, en 2001 se estima que hasta el 30% de parejas casadas NO
+poseían casas. (En 2001, las parejas casadas que poseían casas era un
+61% [2001 House
+Ownership](https://www.huduser.gov/periodicals/ushmc/fall2001/nd_hinv.html);
+En 2020, un 79% [US Housing
+Data](https://eyeonhousing.org/2022/04/married-couple-homeownership/),
+podría ser que estuviéramos detectando una tendencia).
+
+```{r view-possible-interesting-rules-v2}
+irules.subset <- subset(
+  income.rules.pruned, (lift > 3 | lift < 1.0) & (support < 0.2)
+)
+inspect(head(sort(irules.subset, decreasing=TRUE, by = "lift"), 10)) 
+inspect(head(sort(irules.subset, decreasing=FALSE, by = "lift"), 10)) 
+```
+
+Observamos que en la zona de bajo soporte tenemos reglas que derivan en
+vivir con los padres o familiares. Destaca la cantidad de reglas que
+indican que tener un hijo en esa época era realmente costoso. Implicando
+que, sobre todo si eran padres o madres solteras, y ganaban hasta
+\$40.000, a menudo vivían con los padres para lidiar con los costes y,
+probablemente, con el cuidado de los niños.
+
+```         
+[10] {income=$0-$40,000,                                                                                                            
+      marital status=single,                                                                                                        
+      age=14-34,                                                                                                                    
+      number of children=1+}          => {householder status=live with parents/family} 0.1119837  0.8415301 0.1330716 4.103802   770
+```
+
+Según la investigación de [Jack
+Caporal](https://www.fool.com/money/research/heres-how-much-it-costs-to-raise-a-child/),
+en 2001 crear un niño costaba alrededor de \$10.000 anuales. Estos
+gastos podrían explicar la dificultad que tendría las familias
+mono-parentales de emanciparse y poseer una residencia propia.
+
+```{r view-possible-interesting-rules-v3}
+irules.subset <- subset(
+  income.rules.pruned, (support < 0.6 & support > 0.2)
+)
+inspect(head(sort(irules.subset, decreasing=TRUE, by = "lift"), 25)) 
+inspect(head(sort(irules.subset, decreasing=FALSE, by = "lift"), 25)) 
+```
+
+En este último análisis, obtenemos una regla interesante que resalta la
+necesidad de tener múltiples trabajos para vivir en esa zona. Según la
+[Universidad de
+Missouri](https://libraryguides.missouri.edu/pricesandwages/quotable-facts),
+vivir en los años de 2001 a 2009, implica tener un salario mínimo de
+\$5.15 la hora, lo que conlleva a un aproximado \$40.000 anual. Teniendo
+en cuenta que alquilar sería alrededor de unos \$800 ([U.S House Market
+Conditions](https://www.huduser.gov/periodicals/ushmc/winter2001/southwst.html)),
+los gatos de compra unos \$400, las cuentas unos \$100-200, el seguro
+médico unos \$4.000 y entre otros gastos como el ocio, no es
+sorprendente esperar que muchos tuvieran la necesidad de obtener dos o
+más trabajos. Más aún si pretendían completar sus estudios.
+
+```{r young-studying}
+inspect(
+  head(
+    subset(
+      income.rules.pruned, (lhs %pin% "age=14-34") & (lhs %pin% "education=no college graduate") & (rhs %pin% "dual incomes=not married")
+    ), 
+    10
+  ) 
+)
+```
+
+```         
+[1]  {income=$0-$40,000,                                                                                                       
+      age=14-34,                                                                                                               
+      education=no college graduate,                                                                                           
+      householder status=live with parents/family,                                                                             
+      language in home=english}                     => {dual incomes=not married} 0.1282723  0.9876820 0.1298720 1.650778   882
+```
+
+Esto da una perspectiva sobre el gran endeudamiento de muchos jóvenes en
+Estados Unidos. Podemos estimar que más o menos el coste anual de vivir
+en esa época oscilaba entre \$35.000 y \$40.000, y el salario mínimo
+unos \$50.000, haciendo muy difícil completar los estudios sin pedir
+préstamos o teniendo múltiples ingresos (trabajos o emparejarse).
+
+### Analizar las reglas con buenas métricas para múltiples métricas
+
+También, para buscar reglas interesantes podemos hacer uso de una
+combinación de múltiples métricas. Similar a como hicimos los cortes
+anteriores utilizando soporte y LIFT. Pero en este caso podemos añadir
+otras medidas como la convicción, factor de certeza, yules y otros.
+
+```{r filter-good-by-many-metrics}
+# We are looking for values in the range of 1.01 to 5
+conviction <- interestMeasure(income.rules.pruned, measure="conviction")
+# Now we are looking for values near -1 or 1.
+certainty <- interestMeasure(income.rules.pruned, measure="certainty")
+yules <- interestMeasure(income.rules.pruned, measure="yuleQ")
+confidence.centered <- interestMeasure(income.rules.pruned, measure="centeredConfidence")
+
+indexes <- ( 
+  (conviction > 1.01 | conviction < 5) &
+    (certainty < -0.5 | certainty > 0.5) & 
+    (yules < -0.5 | yules > 0.5) & 
+    (confidence.centered < -0.5 | confidence.centered > 0.5)
+)
+inspect(head(income.rules.pruned[indexes], 15))
+```
+
+```         
+[11] {age=35+,                                                                                                               
+      dual incomes=no,                                                                                                       
+      language in home=english}                    => {marital status=married}  0.1020942  0.9845722 0.1036940 2.552760   702
+[9]  {dual incomes=no,                                                                                                       
+      householder status=own}                      => {marital status=married}  0.1058755  0.9877883 0.1071844 2.561098   728
+```
+
+Obtenemos reglas interesantes que nos indican la presencia de roles en
+la sociedad, como por ejemplo el hecho de que hubieran una notable
+cantidad de familias que tenían un trabajador y otro cuidador de casa.
+Según el [U.S Bureau of Labor
+Statistics](https://www.bls.gov/opub/ted/2014/ted_20140602.htm), este
+tipo de familia sin múltiples ingresos (sin ambos padres trabajando)
+constituían el 22% de la población.
+
+Si visualizamos el grafo, veremos que destacan nodos en los que se
+observan reglas similares a las que hemos ido discutiendo anteriormente.
+
+```{r visualize-graph}
+plot(income.rules.pruned, method='graph')
+```
+
+```{r visualize-matrix}
+plot(income.rules.pruned, method = "matrix", engine = "html") 
+```
+
+En la parte superior izquierda observamos muchas reglas similares a las
+discutidas anteriormente, donde gente muy joven, o con salario dentro
+del rango de \$0-40.000, y as veces con hijos, termina viviendo con sus
+padres o familiares. Un poco más abajo, en la cuarta fila, observamos
+muchas reglas que nos indica que una vez que alcanzan los 35, o más,
+años y se casan (obteniendo ahora múltiples ingresos), normalmente
+consiguen obtener una casa propia. Con la siguiente fila confirmamos que
+suelen estar solteros durante esa primera etapa de su vida y mientras
+viven con sus familiares. En la fila 9, también se reafirma estas reglas
+ya que ahora el consecuente es tener +35 para antecedentes como tener
+casa, ganar más de \$40.000, estar casado y otros.
+
+### Filtramos las clases mayoritarias.
+
+Podemos intentar excluir clases mayoritarias de nuestro conjunto de
+datos para analizar nuevas posibles reglas.
+
+```{r filter-non-white}
+incomeESL.nonwhite <- incomeESL[incomeESL$`ethnic classification` != 'white', ]
+income.nonwhite <- transactions(incomeESL.nonwhite)
+# nonwhite.rules <- apriori(income.nonwhite, parameter = list(support = 0.1, confidence = 0.8, minlen = 2)) 
+nonwhite.freq <- apriori(income.nonwhite, parameter = list(support = 0.1, target="frequent")) 
+nonwhite.freq <- sort(nonwhite.freq, by="support")  # Los ordenamos por el valor del soporte 
+summary(nonwhite.freq)
+```
+
+```{r nonwhite-rules}
+nonwhite.rules <- apriori(income.nonwhite, parameter = list(support = 0.1, confidence = 0.8, minlen = 2)) 
+nonwhite.rules.sorted <- sort(nonwhite.rules, decreasing=TRUE, by="lift")
+nonwhite.rules.redudant <- is.redundant(x = nonwhite.rules.sorted,measure = "lift")
+nonwhite.rules.pruned <- nonwhite.rules.sorted[!nonwhite.rules.redudant]
+inspect(head(nonwhite.rules.pruned, 20))
+
+plot(nonwhite.rules.pruned, method = "matrix", engine = "html") 
+```
+
+Observamos muchas reglas en la tercera fila que implican vivir con la
+familia. Dichas reglas parecen indicar que hay bastantes familias de
+diferentes etnias que han inmigrado hacia la zona de la bahía de San
+Francisco y han empezado a asentarse allí. De ellas, las que realizaron
+la encuesta muchas parecen tener entre 14-34 años, estar estudiando y
+trabajando a la vez. Tenemos posibilidad de que hayan ido a vivir allí
+recientemente y también familias que parecen haber asentado ya sus
+raíces, ya que viven allí hace más de 10 años.
+
+```         
+[16] {income=$0-$40,000,                                                                                                            
+      marital status=single,                                                                                                        
+      age=14-34,                                                                                                                    
+      education=no college graduate,                                                                                                
+      occupation=student,                                                                                                           
+      type of home=house}             => {householder status=live with parents/family} 0.1003963  0.9344262 0.1074417 3.176769   228
+[57]  {marital status=single,                                                                                                        
+        age=14-34,                                                                                                                    
+        education=no college graduate,                                                                                                
+        occupation=student,                                                                                                           
+        years in bay area=10+}          => {householder status=live with parents/family} 0.1056803  0.8921933 0.1184500 3.033190   240
+```
+
+Podemos resaltar que esas reglas son realmente interesantes, ya que se
+puede afirmar con los números obtenidos del análisis de la población del
+gobierno americano en
+[Spur](https://www.spur.org/publications/urbanist-article/2001-07-01/san-francisco-numbers).
+Allí, citan que San Francisco han sufrido una gran inmigración de gente
+calificada y adinerada. ("Moreover, wealthy, educated people from all
+over the world have flooded into San Francisco over the past couple of
+decades..."). En
+[WikiPedia](https://en.wikipedia.org/wiki/Demographics_of_San_Francisco)
+podemos ver el incremento en el tiempo de población de diferentes
+etnias. Filtramos a que en el consecuente no esté el hecho de que vivan
+con familiares, obtenemos reglas que nos indican que son gente
+adinerada, con propiedades y casadas (familias). (Podrían haber
+realizado encuestas a miembros de la misma familia y estemos observando
+esto). Aunque también se observan algunas de gente esté de alquiler
+(Quizás hijos que estén en proceso de independización).
+
+```{r subset-of-rhs-nonwhite}
+nonwhite.subset <- subset(
+  nonwhite.rules.pruned, subset = !(rhs %in% "householder status=live with parents/family")
+)
+inspect(head(nonwhite.subset, 20))
+```
+
+```         
+[1]  {income=$40,000+,                                                                                                 
+      marital status=married,                                                                                          
+      type of home=house}             => {householder status=own}         0.1012770  0.8614232 0.1175694 3.115115   230
+```
+
+# Análisis con grupos de reglas
+
+Siguiendo con nuestro análisis de la economía de San Francisco, podemos
+recalcar que incluso parece haber una brecha salarial entre gente con
+diferentes niveles de educación. Si analizamos las personas graduadas
+frente a las que no, vemos que las graduadas suelen tener un mejor
+puesto laboral y por ello mejores condiciones de vida (como por ejemplo
+tener propiedad y +\$40.000). Mientras que las que no finalizaron sus
+estudios tienen peores condiciones financieras. Si revisamos [U.S BUREAU
+OF LABOR
+STATISTICS](https://www.bls.gov/opub/ted/2001/June/wk4/art03.htm) en
+2001, vemos que graduados obtenían alrededor del doble (\$400 dólares
+más que la mediana de los que no se habían graduado). Esta brecha
+salarial sigue presente en 2024 [US BUREAU OF LABOR
+STATISTICS](https://www.bls.gov/emp/chart-unemployment-earnings-education.htm).
+Esto explica la capacidad de poseer propiedades de los graduados,
+también debido al bajo ratio de desempleo de estos, que facilita la
+solicitud de hipotecas.
+
+```{r check-between-graduate-no-graduate}
+grouped.rules <- apriori(income, parameter = list(support = 0.05, confidence = 0.2, minlen = 2)) 
+grouped.rules.sorted <- sort(grouped.rules, decreasing=TRUE, by="confidence")
+grouped.rules.redudant <- is.redundant(x = grouped.rules.sorted, measure = "confidence")
+grouped.rules.pruned <- grouped.rules.sorted[!grouped.rules.redudant]
+binary <- c("income", "age", "education", "years in bay area", "number in household", "number of children")
+```
+
+```{r review-stuff}
+graduate.rules <- subset( 
+  grouped.rules.pruned,
+  subset = (rhs %pin% "education=college graduate")  & (lhs %pin% "householder status")
+)
+inspect(head(graduate.rules, 20))
+graduate.rules <- subset( 
+  grouped.rules.pruned,
+  subset = (rhs %pin% "education=no college graduate") & (lhs %pin% "householder status") & !(lhs %pin% "occupation=student") & !(lhs %pin% "householder status=live with parents/family")
+  # & (lhs %pin% "occupation") & !(lhs %pin% "occupation=student")
+)
+inspect(head(graduate.rules, 20))
+```
+
+# Análisis con negaciones
+
+Por último, realizaremos un análisis de reglas con negaciones. Para
+ello, nos centramos en los diferentes tipos de profesiones que posee la
+muestra obtenida.
+
+```{r negate-occupation}
+income.negated <- incomeESL
+occupations <- levels(income.negated$occupation)
+for (occupation in occupations) {
+  income.negated[, occupation] <- as.factor(income.negated$occupation == occupation)
+}
+income.negated$occupation <- NULL
+householder_levels <- levels(income.negated$`householder status`)
+# Introducir ítems negados y asignar valores True o False según esté presente o no
+for (level in householder_levels) {
+income.negated[, level] <- as.factor(income.negated$`householder status` == level)
+}
+income.negated$`householder status` <- NULL
+```
+
+Obtenemos las posibles reglas.
+
+```{r negated-rules}
+income.negated.rules <- apriori(income.negated, parameter = list(support = 0.1, confidence = 0.4, minlen = 2)) 
+income.negated.rules.sorted <- sort(income.negated.rules, decreasing=TRUE, by="lift")
+income.negated.rules.redudant <- is.redundant(x = income.negated.rules.sorted, measure = "confidence")
+income.negated.rules.pruned <- income.negated.rules.sorted[!income.negated.rules.redudant]
+inspect(head(income.negated.rules.pruned, 20))
+```
+
+Vemos muchas reglas redundantes en las cuáles el antecedente y el
+consecuente son partes de los conjuntos negados generados que son
+disjuntos entre sí. Para ello, debemos eliminar dichas reglas de alguna
+forma. Una opción es intentar fijarnos en un ejemplo en concreto.
+
+```{r view-homemakers}
+income.negated.homemakers <- subset(
+  income.negated.rules.pruned, 
+  subset = (rhs %pin% "homemaker=FALSE")
+)
+inspect(head(income.negated.homemakers, 10))
+```
+
+```         
+[8] {sex=male, age=14-34, education=no college graduate, rent=FALSE}    =>  {homemaker=FALSE}   0.1060209   1.0000000   0.1060209   1.079096    729
+[9] {sex=male, education=no college graduate, years in bay area=10+, rent=FALSE}    =>  {homemaker=FALSE}   0.1223095   0.9988124   0.1224549   1.077814    841
+[10]    {sex=male, age=14-34, type of home=house, language in home=english} =>  {homemaker=FALSE}   0.1210006   0.9987995   0.1211460   1.077801    832
+```
+
+Observamos cierta tendencia a que si el género es masculino, el rol de
+esta persona en su familia no será de amo de casa (como ya extrapolamos
+anteriormente). Es interesante, ya que el análisis obtenido al finalizar
+el año de 2001 indica, según [U.S Bureau of Labor
+Statistics](https://www.bls.gov/opub/ted/2014/ted_20140602.htm), que sí,
+solamente en el \~4% de las familias era la mujer la que trabajaba.
+
+# Conclusiones
+
+Gracias al análisis de reglas hemos obtenido consecuentes interesantes,
+capaces de indicarnos la dirección de la población en San Francisco. Ya
+que vimos hechos como que era difícil tener propiedad para la población
+joven, teniendo en cuenta datos de [ ](), que para ello era conveniente
+estar casado y tener múltiples trabajos, que empezaba una inmigración de
+individuos de diferente etnia y que había una presencia de ciertos roles
+sociales, como el hecho de que los hombres deben ser los que proveen a
+la familia.
+
+## Reglas obtenidas
+
+1.  Rol del hombre como aquel que provee
+
+```         
+[11] {age=35+,                                                                                                               
+      dual incomes=no,                                                                                                       
+      language in home=english}                    => {marital status=married}  0.1020942  0.9845722 0.1036940 2.552760   702
+[9]  {dual incomes=no,                                                                                                       
+      householder status=own}                      => {marital status=married}  0.1058755  0.9877883 0.1071844 2.561098   728
+```
+
+a.  Usamos negación para re-afirmar la primera regla, el hombre es el
+    que provee
+
+```         
+[8] {sex=male, age=14-34, education=no college graduate, rent=FALSE}                =>  {homemaker=FALSE}   0.1060209   1.0000000   0.1060209   1.079096    729
+[9] {sex=male, education=no college graduate, years in bay area=10+, rent=FALSE}    =>  {homemaker=FALSE}   0.1223095   0.9988124   0.1224549   1.077814    841
+[10]{sex=male, age=14-34, type of home=house, language in home=english}             =>  {homemaker=FALSE}   0.1210006   0.9987995   0.1211460   1.077801    832
+```
+
+2.  Gente mayor y casado logra tener propiedades con mayor facilidad
+
+```         
+[4]  {marital status=married,                                                                                
+      age=35+,                                                                                               
+      years in bay area=10+,                                                                                 
+      type of home=house}           => {householder status=own} 0.1567772  0.9190111 0.1705934 2.445480  1078
+      
+```
+
+3.  La gente joven suele tener bajos ingresos y vivir con los padres,
+    sobre todo si tienen uno o varios hijos.
+
+```         
+[10] {income=$0-$40,000,                                                                                                            
+      marital status=single,                                                                                                        
+      age=14-34,                                                                                                                    
+      number of children=1+}          => {householder status=live with parents/family} 0.1119837  0.8415301 0.1330716 4.103802   770
+```
+
+4.  La gente joven necesita habitualmente tener dos trabajos.
+
+```         
+[1]  {income=$0-$40,000,                                                                                                       
+      age=14-34,                                                                                                               
+      education=no college graduate,                                                                                           
+      householder status=live with parents/family,                                                                             
+      language in home=english}                     => {dual incomes=not married} 0.1282723  0.9876820 0.1298720 1.650778   882
+```
+
+5.  Inmigración y individuos asentados de diferente etnias (filtramos
+    `ethnic classification!=white`). Además, los mayores, suelen ser
+    gente adinerada.
+
+```         
+[16] {income=$0-$40,000,                                                                                                            
+      marital status=single,                                                                                                        
+      age=14-34,                                                                                                                    
+      education=no college graduate,                                                                                                
+      occupation=student,                                                                                                           
+      type of home=house}               => {householder status=live with parents/family} 0.1003963  0.9344262 0.1074417 3.176769   228
+[57] {marital status=single,                                                                                                        
+       age=14-34,                                                                                                                    
+       education=no college graduate,                                                                                                
+       occupation=student,                                                                                                           
+       years in bay area=10+}           => {householder status=live with parents/family} 0.1056803  0.8921933 0.1184500 3.033190   240
+[1]  {income=$40,000+,                                                                                                 
+      marital status=married,                                                                                          
+      type of home=house}               => {householder status=own}                      0.1012770  0.8614232 0.1175694 3.115115   230
+```
+
+# Apéndice
+
+Una página con datos muy interesantes para poder realizar comparaciones
+y un análisis más robusto de la zona de San Francisco sería [Data
+USA](https://datausa.io/profile/geo/san-francisco-ca#education)
