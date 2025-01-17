@@ -1,0 +1,183 @@
+\documentclass[12pt,letterpaper]{article}
+\usepackage[framemethod=tikz]{mdframed}
+\usepackage[utf8]{inputenc} %Spanish input
+\usepackage[T1]{fontenc} % Use 8-bit encoding that has 256 glyphs
+\usepackage[spanish, es-tabla]{babel} % Selecciona el español para palabras introducidas automáticamente, p.ej. "septiembre" en la fecha y especifica que se use la palabra Tabla en vez de Cuadro
+\usepackage{fullpage}
+\usepackage[top=2cm, bottom=4.5cm, left=2.5cm, right=2.5cm]{geometry}
+\usepackage{lastpage}
+\usepackage{enumerate}
+\usepackage[inline]{enumitem}
+\usepackage{fancyhdr}
+\usepackage{xcolor}
+%
+\usepackage[sorting=none]{biblatex}
+\addbibresource{citas.bib}
+%
+\usepackage{csquotes}
+\usepackage{cellspace}
+\setlength{\cellspacetoplimit}{5pt}
+\setlength{\cellspacebottomlimit}{5pt}
+\usepackage{hhline}
+\usepackage{listings}
+\usepackage{hyperref}
+\usepackage{titletoc,tocloft}
+\usepackage{float,subfig}
+\setlength{\cftsubsecindent}{2cm}
+\setlength{\cftsubsubsecindent}{4cm}
+\dottedcontents{section}[1.5em]{}{1.3em}{.6em}
+%\usepackage[nodisplayskipstretch]{setspace}
+%
+\graphicspath{ {./imgs/} } %Drawing the background pic
+\usepackage{tikz}
+\newcommand{\tikzmark}[1]{\tikz[baseline,remember picture] \coordinate (#1) {};}
+\usetikzlibrary{positioning}
+\usetikzlibrary{shadows,arrows.meta} % For adding edges label
+\usetikzlibrary{calc}
+\usepackage{eso-pic}
+\AddToShipoutPictureBG{%
+    \begin{tikzpicture}[remember picture, overlay]
+        \node[opacity=.15, inner sep=0pt]
+            at(current page.center){\includegraphics[scale=1.5]{logo-ugr2}};
+    \end{tikzpicture}%
+}
+
+% \numberwithin{equation}{section} % Number equations within sections (i.e. 1.1, 1.2, 2.1, 2.2 instead of 1, 2, 3, 4)
+% \numberwithin{figure}{section} % Number figures within sections (i.e. 1.1, 1.2, 2.1, 2.2 instead of 1, 2, 3, 4)
+% \numberwithin{table}{section} % Number tables within sections (i.e. 1.1, 1.2, 2.1, 2.2 instead of 1, 2, 3, 4)
+
+\hypersetup{%
+    colorlinks=true,
+    linkcolor=[rgb]{0.2, 0.3, 0.5},
+    urlcolor=black,
+    citecolor=black,
+    linkbordercolor={0 0 1}
+}
+
+\renewcommand\lstlistingname{Código:}
+\renewcommand\lstlistlistingname{Código:}
+\def\lstlistingautorefname{Brian SS.}
+%
+%
+\newcommand{\horrule}[1]{\rule{\linewidth}{#1}} % Create horizontal rule command with 1 argument of height
+\definecolor{codegreen}{rgb}{0,0.6,0}
+\definecolor{codegray}{rgb}{0.5,0.5,0.5}
+\definecolor{codepurple}{rgb}{0.58,0,0.82}
+\definecolor{backcolour}{rgb}{0.95,0.95,0.92}
+%
+\lstset{language=python,basicstyle=\linespread{1.1}\ttfamily\footnotesize,
+    xleftmargin=0.0cm, frame=t, framesep=0.15cm, framerule=0pt, tabsize=4,
+    showspaces=false, showstringspaces=false,showlines=true,
+    keywordstyle=\color{blue}\ttfamily,
+    stringstyle=\color{red}\ttfamily,
+    commentstyle=\color{gray}\ttfamily,
+    morecomment=[l][\color{magenta}]{\#}
+}
+%
+\setlength{\parindent}{0.0in}
+\setlength{\parskip}{0.05in}
+%
+%% Edit these as appropriate
+\newcommand\course{Ciencia de Datos e Ingenieria de Computadores}
+\newcommand\hwnumber{1}                  % <-- homework number
+\newcommand\NetIDa{Brian}           % <-- NetID of person #1
+\newcommand\NetIDb{Sena Simons}           % <-- NetID of person #1
+%
+\pagestyle{fancyplain}
+\headheight 35pt
+\lhead{\NetIDa}
+\lhead{\NetIDa\\\NetIDb}                 % <-- Comment this line out for problem sets (make sure you are person #1)
+\chead{\hspace{-2cm}\textbf{\large Cuestionario Tema 1}}
+\rhead{\course \\ \today}
+\lfoot{\scriptsize\LaTeX}
+\cfoot{\hyperlink{Indice}{Volver al índice}}
+\rfoot{\small\thepage}
+\headsep 1.5em
+%
+\renewcommand*\contentsname{Índice}
+%
+\author{Brian Sena Simons} % Nombre y apellidos
+%
+\date{\normalsize\today} % Incluye la fecha actual
+%
+\begin{document}
+%
+\begin{titlepage}
+\begin{figure}[H]
+    \vspace{-1.3cm}
+    \begin{center}
+        \includegraphics[width=0.75\textwidth]{Etsiit}
+    \end{center}
+\end{figure}
+\vspace{1.3cm}
+\centering
+\normalfont \normalsize
+\textsc{\textbf{Cuestionario Tema 1}\\ \vspace{.15cm} Master en Ciencia de Datos e Ingeniería de Computadores \\ \vspace{.15cm} Universidad de Granada} \\ [25pt] % Your university, school and/or department name(s)
+    \horrule{0.5pt} \\[0.4cm] % Thin top horizontal rule
+    \huge Visión por Computador\\ % The assignment title
+    \horrule{2pt} \\[0.5cm] % Thick bottom horizontal rule
+
+\begin{minipage}{0.4\textwidth}
+    \begin{flushleft}\large
+        \emph{Autor:} \\
+         ----------------------- \\
+        \vspace{.15cm}
+        Brian Sena Simons. \\
+
+    \end{flushleft}
+\end{minipage}
+\begin{minipage}{0.4\textwidth}
+    \begin{flushright}\large
+    \end{flushright}
+\end{minipage}
+\end{titlepage}
+
+
+\hypertarget{Indice}{}
+\tableofcontents
+\newpage
+\section{¿Qué es una imagen?}
+Según la Real Academia Española (RAE)~\cite{RAE}, una imagen es ``Figura, representación, semejanza y apariencia de algo''.
+En la informática, cuando hablamos de imágenes, nos referimos a la tercera definición ``Reproducción de la figura de un objeto por la combinación de los rayos de luz que proceden de él''.
+Donde disponemos de una proyección de la escena, 3D, en un plano 2D (imagen) a través de los rayos de luz que emite.
+\section{¿En qué consiste el proceso de digitalización?}
+La digitalización de una función consiste en pasar de un dominio continuo a un dominio discreto, tanto en los valores devueltos por la función como en los puntos donde es evaluada.
+Debemos tener en cuenta la resolución espacial (cuantas muestras tomar), la resolución de la señal (rango dinámico de valores permitidos) y el patrón de teselación (como ``cubrir'' la imagen con las muestras).
+Lo más común es usar una teselación cuadrada, donde cada píxel (punto muestreado) corresponde a un cuadrado de la imagen.
+\section{¿Qué diferencias hay entre cuantificación y muestreo?}
+El muestreo hace referencia a la selección de puntos representativos y la cantidad total de puntos de la imagen mientras que la cuantificación implica una transformación de los valores continuos a discretos (por ejemplo convertir la intensidad de la señal del sensor lumínico de un valor continuo al intervalo 0 a 255.)
+La resolución espacial se refiere a la resolución de muestreo, es decir, cuántas muestras se toman para representar los detalles finos de la imagen. cuanto mayor sea la resolución espacial, más detalles se representarán en la imagen digitalizada.
+La resolución de señal se refiere a la resolución de cuantización, es decir, cuántos niveles de gris se utilizan para representar la imagen. Cuanto mayor sea la resolución de intensidad, más tonos de gris se podrán representar en la imagen digitalizada.
+\section{Si en la imagen el objeto más pequeño mide 10 píxeles, ¿cuál sería el tamaño de muestreo que necesitamos para representar esa estructura?}
+Si suponemos un muestreo equiespaciado, para asegurar encontrar el objeto deberíamos utilizar un espacio de muestreo de tamaño $s \leq \frac{d}{2}$, es decir $s \leq 5$. 
+De esta forma, nos aseguramos que no ``nos saltamos'' el objeto mientras muestreamos.
+\section{Comentar si es verdadera o falsa las siguientes afirmaciones}
+\begin{enumerate}
+    \item En el modelo de cámara ``pinhole'' debemos tener una apertura grande.
+        \begin{itemize}
+            \item Falso, a medida que incrementamos el tamaño de la apertura,  la imagen (los puntos) se difumina, ya que el mismo punto $P$ tiene de correspondencia en el plano proyecto a más de 1 punto $P'$.
+        \end{itemize}
+    \item La distancia focal es la distancia que existe entre el agujero, en el modelo de cámara pinhole, y el plano de proyección.
+        \begin{itemize}
+            \item Verdadero. Es la distancia del pinhole al plano de proyección sobre el eje Z  (eje óptico). Si denominamos el pinhole como O, y la intersección de la recta perpendicular al plano de proyección, que pasa por O, sobre el mismo como $C'$, la distancia focal es O$C'$.
+        \end{itemize}
+    \item Un punto P en el mundo real en un modelo de cámara ideal, se proyecta en un único punto en el plano de imagen.
+        \begin{itemize}
+            \item Verdadero. El punto P del mundo real que pasa por la apertura (pinhole) de tamaño adecuado se proyecta en un solo punto $P'$. Si la apertura empieza a ser demasiado grande obtendremos una imagen borrosa (difuminada) debido a que 1 punto $P$ corresponde a varios $P'$, ya que rayos de luz del mismo punto $P$ con diferente dirección logran entrar por el pinhole generando un ''círculo de confusión``
+        \end{itemize}
+    \item Un punto P en el plano de imagen se proyecta en un único punto en el mundo real.
+        \begin{itemize}
+            \item Falso. Un punto en el plano proyectado corresponde a diversos puntos en el mundo real sobre el eje Z (profundidad).
+        \end{itemize}
+\end{enumerate}
+\section{¿Cuál es el sistema de representación de color que representa el color como lo hace el humano?}
+El sistema de representación de color que mejor representa el color como lo perciben los humanos es el espacio de color LAB. Este sistema está diseñado para aproximar la percepción del color humano de manera uniforme. 
+Está basado en cómo los humanos perciben las diferencias de color. Se compone de tres componentes:
+\begin{itemize}
+\item L: Representa la luminosidad (0 para negro y 100 para blanco).
+\item A: Representa los colores del eje verde (-A) a rojo (+A).
+\item B: Representa los colores del eje azul (-B) a amarillo (+B).
+\end{itemize}
+La percepción del color humano está influenciada por la sensibilidad de los conos en nuestros ojos, que son receptores sensibles al rojo, verde y azul (aproximadamente). LAB tiene en cuenta esta sensibilidad, pero también corrige cómo percibimos las diferencias de brillo y saturación.
+\printbibliographyº
+\end{document}

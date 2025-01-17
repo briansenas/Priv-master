@@ -52,6 +52,11 @@ CienciaDatos/datasets
 *.ppt
 *.docx
 *.mp4
+*.avi
+*.run.xml
+*.~lock*
+*.bcf
+*.fdb_latexmk
 *.gz
 ECI/practicas/data/*
 *.7z
