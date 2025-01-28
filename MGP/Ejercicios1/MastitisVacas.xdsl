@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- This network was created in GeNIe Academic, which can be used for academic teaching and research purposes only -->
+<smile version="1.0" id="Network1" numsamples="10000" discsamples="10000">
+	<nodes>
+		<deterministic id="D">
+			<state id="Sí" />
+			<state id="No" />
+			<resultingstates>No</resultingstates>
+		</deterministic>
+		<deterministic id="N">
+			<state id="corto" />
+			<state id="largo" />
+			<resultingstates>corto</resultingstates>
+		</deterministic>
+		<deterministic id="T">
+			<state id="poco" />
+			<state id="mucho" />
+			<resultingstates>poco</resultingstates>
+		</deterministic>
+		<cpt id="M">
+			<state id="Mastitis" />
+			<state id="Normal" />
+			<parents>D T N</parents>
+			<probabilities>0.2 0.8 0.7 0.3 0.05 0.95 0.3 0.7 0.1 0.9 0.1 0.9 0.05 0.95 0.05 0.95</probabilities>
+		</cpt>
+		<cpt id="G">
+			<state id="Bien" />
+			<state id="Mal" />
+			<parents>M</parents>
+			<probabilities>0.1 0.9 0.8 0.2</probabilities>
+		</cpt>
+		<cpt id="L">
+			<state id="Positivo" />
+			<state id="Negativo" />
+			<parents>T M</parents>
+			<probabilities>0.9 0.1 0.05 0.95 0.7 0.3 0.3 0.7</probabilities>
+		</cpt>
+	</nodes>
+	<extensions>
+		<genie version="1.0" app="GeNIe 5.0.4708.0 ACADEMIC" name="Network1">
+			<node id="D">
+				<name>D</name>
+				<interior color="e5f6f7" />
+				<outline color="000080" />
+				<font color="000000" name="Arial" size="8" />
+				<position>186 107 225 134</position>
+			</node>
+			<node id="N">
+				<name>N</name>
+				<interior color="e5f6f7" />
+				<outline color="000080" />
+				<font color="000000" name="Arial" size="8" />
+				<position>329 108 368 135</position>
+			</node>
+			<node id="M">
+				<name>M</name>
+				<interior color="e5f6f7" />
+				<outline color="000080" />
+				<font color="000000" name="Arial" size="8" />
+				<position>187 209 226 236</position>
+			</node>
+			<node id="G">
+				<name>G</name>
+				<interior color="e5f6f7" />
+				<outline color="000080" />
+				<font color="000000" name="Arial" size="8" />
+				<position>191 326 230 353</position>
+			</node>
+			<node id="T">
+				<name>T</name>
+				<interior color="e5f6f7" />
+				<outline color="000080" />
+				<font color="000000" name="Arial" size="8" />
+				<position>329 208 368 235</position>
+			</node>
+			<node id="L">
+				<name>L</name>
+				<interior color="e5f6f7" />
+				<outline color="000080" />
+				<font color="000000" name="Arial" size="8" />
+				<position>332 326 371 353</position>
+			</node>
+		</genie>
+	</extensions>
+</smile>
