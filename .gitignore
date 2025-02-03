@@ -64,6 +64,12 @@ CienciaDatos/entrega/SenaSimonsBrian_ICD/*
 Mineria/Preprocesamiento/Session*/*
 Mineria/Preprocesamiento/FeatureEngineering/*
 MGP/Genie/*
+VC/**/*.png
+VC/**/*.jpg
+VC/**/*.tif
+VC/**/*.ppm
+VC/**/*.gif
+VC/**/*.pgm
 *.xls
 # R ignores
 # History files
