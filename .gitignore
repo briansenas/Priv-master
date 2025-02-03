@@ -72,6 +72,7 @@ VC/**/*.ppm
 VC/**/*.gif
 VC/**/*.pgm
 *.xls
+*.xlsx
 # R ignores
 # History files
 .Rhistory
