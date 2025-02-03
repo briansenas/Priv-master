@@ -60,6 +60,7 @@ CienciaDatos/datasets
 *.gz
 ECI/practicas/data/*
 *.7z
+*.exe
 CienciaDatos/entrega/SenaSimonsBrian_ICD/*
 Mineria/Preprocesamiento/Session*/*
 Mineria/Preprocesamiento/FeatureEngineering/*
